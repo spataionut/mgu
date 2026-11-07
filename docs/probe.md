@@ -11,13 +11,13 @@ The report covers which user the app runs as, where it can write, the odometer s
 
 ## At home: put it on the stick
 
-The stick is FAT32 and mounts as `/Volumes/MGU`. Use the GitHub source, not this folder: `usb-repo` copies a local folder exactly as it is, including any `dist/`, `oap-sdk/` or `unit-dump/` in it.
+The stick is FAT32 and mounts as `/Volumes/MGU`.
 
 ```bash
-node mgu-install.js usb-repo /Volumes/MGU github:spataionut/mgu
+tools/make-stick.sh /Volumes/MGU
 ```
 
-The repo is private, so this uses your `gh` login. Eject the stick before you unplug it.
+This exports only the committed files (`git archive`) and runs `mgu-install.js usb-repo` on them. Don't point `usb-repo` at this folder directly: it copies a folder as it is, including any `dist/`, `oap-sdk/` or `unit-dump/` in it. Don't use `github:spataionut/mgu` either: that input only reads repos that publish releases. Eject the stick before you unplug it.
 
 ## In the car
 
