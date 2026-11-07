@@ -2,7 +2,7 @@
 
 A service log for the BMW iDrive 7 head unit (MGU): every service and repair done on the car, plus what's due next. Installed and updated through [mgu-store](https://github.com/robertnisipeanu/mgu-store).
 
-**Status:** pre-milestone 1. No installable app yet. See [docs/research.md](docs/research.md) for what is confirmed and what is still open.
+**Status:** pre-milestone 1. The only app so far is **SB Probe** (`apps/sp_probe`), a one-off helper that copies reference files off the head unit without SSH ([docs/probe.md](docs/probe.md)). See [docs/research.md](docs/research.md) for what is confirmed and what is still open.
 
 ## Planned features
 
@@ -14,10 +14,15 @@ A service log for the BMW iDrive 7 head unit (MGU): every service and repair don
 
 ## Development
 
-Pull the reference files off the head unit into the git-ignored `unit-dump/` folder. This only reads from the unit:
+Apps live in `apps/<id>/` as `app.json` + `main.js`, built by the vendored kit (`kit/`, MIT, from [cauliflowermossgrape/idrive7-apps](https://github.com/cauliflowermossgrape/idrive7-apps)). The head unit builds them from source through `mgu-repo.json`.
 
 ```bash
-tools/unit-dump.sh -i /path/to/ssh/key
+python3 kit/tools/build.py --preview-only sp_probe
+node kit/tools/preview.js dist/sp_probe
+node test/probe_tar.test.js
+node test/probe_e2e.test.js
 ```
+
+With SSH access, `tools/unit-dump.sh -i <key>` pulls the reference files into the git-ignored `unit-dump/` folder (read-only on the unit). Without it, use SB Probe.
 
 BMW SDK files, anything extracted from the unit, built packages, VINs and keys must never be committed. `.gitignore` covers the known paths.

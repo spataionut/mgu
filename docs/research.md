@@ -43,4 +43,14 @@ To check in `someip-interfaces.json`: the full interface name, whether the field
 
 ## Data safety (open)
 
-Whether an app's permissions allow writing outside its own data folder is still to be checked. Look at `kit/platform/permissions.json` and the real per-app user on the unit.
+Whether an app may write outside its own data folder is still unknown. The probe's report answers it: it runs write tests on the stick, `/tmp`, `/var/tmp`, the OAP folders and the home folder.
+
+**Kit behaviour to change before the real app:** `kit/runtime/mgu.js` calls `process.exit(1)` on an uncaught exception. On the car that counts as a crash, so `CorruptAppsHandler` wipes the data folder. The service log must not depend on it: catch everything in the app, and decide whether to patch the vendored kit.
+
+## Access
+
+There is no SSH key (the unit was rooted on a PC that's gone), so `tools/unit-dump.sh` can't be used for now. [probe.md](probe.md) gets the same files through a USB-installed app.
+
+## Vendored kit
+
+`kit/` is from `cauliflowermossgrape/idrive7-apps` at commit `4578c01b3b80747ad7ffe5da0368abdc0b988af9` (MIT, `kit/LICENSE.idrive7-apps`). It includes `runtime/`, `platform/` and the build and preview tools. It leaves out the GPU renderer, the controller gate, the emulator and the translations. Apps here use native HMI menu screens, which need none of those.
