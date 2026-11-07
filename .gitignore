@@ -1,0 +1,36 @@
+# BMW SDK and anything extracted from the head unit: never commit
+oap-sdk/
+unit-dump/
+catalog/
+someip-interfaces.json
+
+# Built packages (may contain the SDK)
+dist/
+preview/
+*.mgu
+*.tgz
+
+# Keys, provisioning, VINs
+*.pem
+*.key
+*.ppk
+id_rsa*
+id_ed25519*
+id_ecdsa*
+*.provisioning
+provisioning/
+*vin*.txt
+
+# Personal service log exports
+backups/
+servicebook-export*.json
+
+# Third-party installer, downloaded separately from mgu-store
+mgu-install.js
+
+# Local tooling
+node_modules/
+.DS_Store
+__pycache__/
+*.pyc
+.claude/settings.local.json
