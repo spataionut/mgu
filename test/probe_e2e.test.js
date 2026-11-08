@@ -1,6 +1,7 @@
 'use strict';
 // End-to-end test of SB Probe in the kit's stubbed head unit, against a fake unit tree:
-// builds the preview, presses "Copy files to USB stick", and checks what lands on the fake stick.
+// builds the preview, runs tools/receive-dump.py on localhost, presses "Send files to Mac",
+// and checks what the receiver got.
 //   node test/probe_e2e.test.js
 const assert = require('assert');
 const fs = require('fs');
@@ -23,13 +24,29 @@ put('usr/lib/oap-mainapp/rhmiData/uiDescriptions/ID7/uiDescription.json', '{"con
 put('usr/lib/oap-mainapp/javascript/main.js', 'mainapp SpellerInput here');
 fs.mkdirSync(path.join(root, 'media', 'STICK'), { recursive: true });
 put('proc/mounts', '/dev/sda1 /media/STICK vfat rw,relatime 0 0\nproc /proc proc rw 0 0\n');
+// The uplink: the receiver is the "router" (127.0.0.1); .2-.6 have nobody and must not block the send.
+put('run/mgu-uplink/lease.json', JSON.stringify({ interface: 'vethuplink', ip: '127.0.0.5', prefix: 29, router: '127.0.0.1', dns: [] }));
+put('proc/net/arp', 'IP address HW type Flags HW address Mask Device\n127.0.0.3 0x1 0x2 aa:bb:cc:dd:ee:ff * vethuplink\n');
+
+const port = String(20000 + (process.pid % 20000));
+const dir = path.join(root, 'received');
+const receiver = cp.spawn('python3', ['-I', path.join(repo, 'tools', 'receive-dump.py'), '--out', dir, '--port', port, '--once'], { stdio: ['ignore', 'pipe', 'inherit'] });
+let rxLog = '';
+receiver.stdout.on('data', (d) => { rxLog += d; });
 
 const run = (cmd, args, env) => cp.execFileSync(cmd, args, { cwd: repo, env: Object.assign({}, process.env, env), encoding: 'utf8' });
-run('python3', ['kit/tools/build.py', '--preview-only', 'sp_probe']);
-const log = run('node', ['kit/tools/preview.js', 'dist/sp_probe', path.join(root, 'pv'), 'wait=1', 'BTN_USB', 'wait=4'], { SP_PROBE_ROOT: root });
+let log;
+try {
+    run('python3', ['kit/tools/build.py', '--preview-only', 'sp_probe']);
+    const pkg = JSON.parse(fs.readFileSync(path.join(repo, 'dist', 'sp_probe', 'source', 'package.json'), 'utf8'));
+    assert.strictEqual(pkg.mguInternet, true, 'built package.json asks mgu-store for the uplink');
+    log = run('node', ['kit/tools/preview.js', 'dist/sp_probe', path.join(root, 'pv'), 'wait=1', 'BTN_SEND', 'wait=8'],
+        { SP_PROBE_ROOT: root, SP_PROBE_PORT: port });
+} finally {
+    receiver.kill();
+}
 
-assert.ok(/STICK: \d+ files/.test(log), 'status shows a successful copy:\n' + log);
-const dir = path.join(root, 'media', 'STICK', 'sp_probe');
+assert.ok(/Sent \d+ files to 127\.0\.0\.1/.test(log), 'status shows a successful send:\n' + log + '\nreceiver:\n' + rxLog);
 const names = fs.readdirSync(dir);
 const tarName = names.find((n) => /^dump-.*\.tar$/.test(n));
 assert.ok(tarName, 'dump tar on stick: ' + names);
@@ -52,4 +69,5 @@ assert.ok(/\[speller\] .*oap_12204\/source\/javascript\/app\.js/.test(report), '
 assert.ok(/\[editRoll\]/.test(report) && /\[dropDownMenu\]/.test(report), 'component table terms found');
 assert.ok(!/PERSONAL|speller in app data|\/data\//.test(report), 'nothing from app data folders');
 assert.ok(/media\/STICK: yes/.test(report), 'stick write test recorded');
+assert.ok(/uplink lease: \{"interface":"vethuplink"/.test(report), 'uplink lease recorded');
 console.log('probe e2e ok: ' + listing.length + ' entries in ' + tarName);

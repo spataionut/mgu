@@ -2,9 +2,15 @@
 /**
  * SB Probe: a one-off helper for Service Book development, for a car without SSH.
  *
- * - Shows the odometer (KombiIF.statusRangeTankStatus.mileageKilometre, unverified).
- * - "Copy files to USB stick": writes sp_probe/<time>.tar and report.txt to every stick under /media.
- * - "Serve files over Wi-Fi": http://<head unit>:8737/ for 10 minutes (report and dump.tar).
+ * - Shows the odometer (KombiIF.statusRangeTankStatus.mileageKilometre).
+ * - "Upload to GitHub": device sign-in on the phone, then a release in the private
+ *   spataionut/mgu-dumps with report.txt and dump.tar (probe_github.js).
+ * - "Send files to Mac" (fallback): finds tools/receive-dump.py on the uplink's subnet (the phone hotspot the
+ *   car joined through mgu-uplink) and uploads report-<time>.txt and dump-<time>.tar to it.
+ *
+ * Why push and not USB or a server (seen on the car, 0.1.0): USB sticks are read-only for apps
+ * (EROFS), and the unit's firewall drops every incoming connection an app could listen for.
+ * mgu-uplink lets apps with "mguInternet" connect out through the uplink, so the probe connects out.
  *
  * The dump holds the SOME/IP catalog, one BMW app bundle and RHMI layout files. It never reads
  * apps' data folders. The report says what this app's user may read and write, and where BMW's
@@ -19,21 +25,26 @@ const http = require('http');
 const util = require('util');
 const mgu = require('./kit/mgu');
 const { TarWriter } = require('./probe_tar');
+const github = require('./probe_github');
 
 const readFile = util.promisify(fs.readFile);
 const readdir = util.promisify(fs.readdir);
 const lstat = util.promisify(fs.lstat);
-const fsOpen = util.promisify(fs.open);
-const fsWrite = util.promisify(fs.write);
-const fsFsync = util.promisify(fs.fsync);
-const fsClose = util.promisify(fs.close);
-const fsRename = util.promisify(fs.rename);
 const tick = () => new Promise((r) => setImmediate(r));
 
-// Test-only: a fake unit tree on a PC (test/probe_e2e.test.js). Unset on the car.
+// Test-only overrides: a fake unit tree and receiver port on a PC (test/probe_e2e.test.js). Unset on the car.
 const ROOT = process.env.SP_PROBE_ROOT || '';
-const PORT = 8737;
-const SERVE_MS = 10 * 60 * 1000;
+const PORT = Number(process.env.SP_PROBE_PORT) || 8737;
+const HELLO = 'sp-probe-receiver 1';
+const HELLO_MS = 1500;
+const SCAN_PARALLEL = 32;
+const MAX_HOSTS = 1022;          // up to a /22; bigger subnets are only tried at the router and ARP neighbours
+const IDLE_MS = 60 * 1000;
+// GitHub upload: the client id of the owner's own GitHub App (public, not a secret), installed only
+// on the private repo below. Test-only overrides point it at a fake GitHub.
+const GH_CLIENT_ID = process.env.SP_PROBE_GH_CLIENT || 'Iv23liqYfRZ1xiIC5PIm';   // GitHub App sp-probe-upload
+const GH_REPO = 'spataionut/mgu-dumps';
+const GH_BASE = process.env.SP_PROBE_GH_BASE || '';
 const MAX_FILE = 64 * 1024 * 1024;
 const OAP = ROOT + '/var/opt/public/oap';
 const MAINAPP = ROOT + '/usr/lib/oap-mainapp';
@@ -50,7 +61,7 @@ const GREP = [
     { term: /['"]input['"]/g, max: 15, ctx: 200 },
 ];
 
-const state = { odo: null, odoRaw: null, odoError: null, busy: false, server: null, serverTimer: null };
+const state = { odo: null, odoRaw: null, odoError: null, busy: false };
 
 function errCode(e) { return (e && (e.code || e.message)) || String(e); }
 
@@ -151,6 +162,7 @@ async function report(ctx, files) {
     lines.push('app dir: ' + __dirname);
     lines.push('node: ' + process.version);
     lines.push('addresses: ' + addresses().join(', '));
+    lines.push('uplink lease: ' + JSON.stringify(readLease(ctx)));
     lines.push('odometer: ' + (state.odo !== null ? state.odo + ' km' : 'none') + (state.odoError ? ' (error: ' + state.odoError + ')' : ''));
     lines.push('odometer raw struct: ' + JSON.stringify(state.odoRaw));
     lines.push('', '== mounts under /media');
@@ -185,109 +197,190 @@ async function writeTar(tar, reportText, files) {
     return { files: tar.files, skipped };
 }
 
-async function copyToUsb(ctx) {
-    const mounts = usbMounts();
-    if (!mounts.length) return 'No USB stick found under /media';
-    ctx.ui.text('T_STATUS', 'Collecting files...');
+/** mgu-uplink's lease: {interface, ip, prefix, router, dns[]}, present only while online. */
+function readLease(ctx) {
+    const tries = [];
+    if (ctx && ctx.dataDir) tries.push(path.join(ctx.dataDir, 'uplink.json'));
+    tries.push(ROOT + '/run/mgu-uplink/lease.json');
+    for (const p of tries) {
+        try {
+            const l = JSON.parse(fs.readFileSync(p, 'utf8'));
+            if (l && l.ip && l.prefix) return l;
+        } catch (e) { /* next */ }
+    }
+    return null;
+}
+
+function ipToInt(s) {
+    const p = String(s || '').split('.').map(Number);
+    if (p.length !== 4 || p.some((x) => !(x >= 0 && x <= 255) || Math.floor(x) !== x)) return null;
+    return p[0] * 16777216 + p[1] * 65536 + p[2] * 256 + p[3];
+}
+
+function intToIp(n) {
+    return [Math.floor(n / 16777216) % 256, Math.floor(n / 65536) % 256, Math.floor(n / 256) % 256, n % 256].join('.');
+}
+
+function arpNeighbours() {
+    try {
+        return fs.readFileSync(ROOT + '/proc/net/arp', 'utf8').split('\n').slice(1)
+            .map((l) => l.trim().split(/\s+/))
+            .filter((f) => f.length >= 4 && f[2] !== '0x0')
+            .map((f) => f[0]);
+    } catch (e) {
+        return [];
+    }
+}
+
+/** Addresses to try on the lease's subnet: the router first, then ARP neighbours, then every host. */
+function candidates(lease, neighbours) {
+    const me = ipToInt(lease.ip);
+    const prefix = Number(lease.prefix);
+    if (me === null || !(prefix >= 8 && prefix <= 30)) return [];
+    const size = Math.pow(2, 32 - prefix);
+    const net = Math.floor(me / size) * size;
+    const out = [];
+    const seen = {};
+    const add = (ip) => {
+        const n = ipToInt(ip);
+        if (n === null || n === me || n <= net || n >= net + size - 1 || seen[n]) return;
+        seen[n] = true;
+        out.push(intToIp(n));
+    };
+    add(lease.router);
+    neighbours.forEach(add);
+    if (size - 2 <= MAX_HOSTS) for (let n = net + 1; n < net + size - 1; n++) add(intToIp(n));
+    return out;
+}
+
+/** GET /sp-probe-hello; resolves { ok } or { err: code }. */
+function hello(host) {
+    return new Promise((resolve) => {
+        let done = false;
+        const fin = (v) => { if (!done) { done = true; clearTimeout(timer); resolve(v); } };
+        const req = http.get({ host: host, port: PORT, path: '/sp-probe-hello', timeout: HELLO_MS }, (res) => {
+            let body = '';
+            res.setEncoding('utf8');
+            res.on('data', (d) => { body += d; if (body.length > 200) req.abort(); });
+            res.on('end', () => fin(res.statusCode === 200 && body.trim() === HELLO ? { ok: true } : { err: 'not the receiver' }));
+            res.on('error', () => fin({ err: 'reset' }));
+        });
+        req.on('timeout', () => { req.abort(); fin({ err: 'timeout' }); });
+        req.on('error', (e) => fin({ err: errCode(e) }));
+        const timer = setTimeout(() => { try { req.abort(); } catch (e) { /* gone */ } fin({ err: 'timeout' }); }, HELLO_MS + 500);
+    });
+}
+
+async function findReceiver(ctx, hosts) {
+    let next = 0, tried = 0, found = null;
+    const errs = {};
+    async function worker() {
+        while (!found && next < hosts.length) {
+            const h = hosts[next++];
+            const r = await hello(h);
+            tried++;
+            if (r.ok) { if (!found) found = h; } else errs[r.err] = (errs[r.err] || 0) + 1;
+            if (tried % 16 === 0 && !found) ctx.ui.text('T_DETAIL', 'Tried ' + tried + ' of ' + hosts.length + ' addresses');
+        }
+    }
+    const workers = [];
+    for (let k = 0; k < SCAN_PARALLEL; k++) workers.push(worker());
+    await Promise.all(workers);
+    return { found: found, errs: errs };
+}
+
+/** PUT /upload/<name>; produce(write) writes the body. Resolves with the receiver's answer. */
+function upload(host, name, produce) {
+    return new Promise((resolve, reject) => {
+        let failed = null;
+        const fail = (e) => { if (!failed) { failed = e; reject(e); req.emit('drain'); } };
+        const req = http.request({
+            host: host, port: PORT, method: 'PUT', path: '/upload/' + name,
+            headers: { 'Content-Type': 'application/octet-stream' },
+        });
+        req.on('response', (res) => {
+            let body = '';
+            res.setEncoding('utf8');
+            res.on('data', (d) => { body += d; });
+            res.on('end', () => (res.statusCode === 200 ? resolve(body.trim())
+                : fail(new Error('receiver said ' + res.statusCode + ' ' + body.trim().slice(0, 80)))));
+            res.on('error', fail);
+        });
+        req.on('error', fail);
+        req.on('abort', () => fail(new Error('aborted')));
+        req.setTimeout(IDLE_MS, () => { fail(new Error('timeout')); req.abort(); });
+        const write = (b) => new Promise((ok, no) => {
+            if (failed) return no(failed);
+            if (req.write(b)) ok();
+            else req.once('drain', () => (failed ? no(failed) : ok()));
+        });
+        produce(write).then(() => req.end(), (e) => { fail(e); req.abort(); });
+    });
+}
+
+async function sendToMac(ctx) {
+    const lease = readLease(ctx);
+    if (!lease) return 'No uplink. Join the phone hotspot in Store, Settings, Wi-Fi, then try again';
+    ctx.ui.text('T_DETAIL', 'Uplink ' + (lease.interface || '?') + ' ' + lease.ip + '/' + lease.prefix + ', router ' + lease.router);
+    const hosts = candidates(lease, arpNeighbours());
+    if (!hosts.length) return 'No addresses to try on ' + lease.ip + '/' + lease.prefix;
+    ctx.ui.text('T_STATUS', 'Looking for the Mac on ' + hosts.length + ' addresses...');
+    const r = await findReceiver(ctx, hosts);
+    if (!r.found) {
+        const why = Object.keys(r.errs).map((k) => k + ' x' + r.errs[k]).join(', ');
+        ctx.ui.text('T_DETAIL', 'Uplink ' + lease.ip + '/' + lease.prefix + ': ' + why);
+        return 'No receiver found on port ' + PORT + '. Is receive-dump.py running on a Mac on the same hotspot?';
+    }
+    ctx.ui.text('T_STATUS', 'Found ' + r.found + ', collecting files...');
     const files = await collectFiles();
     const text = await report(ctx, files);
     const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const results = [];
-    for (const m of mounts) {
-        const dir = path.join(m.dir, 'sp_probe');
-        try {
-            try { fs.mkdirSync(dir); } catch (e) { if (e.code !== 'EEXIST') throw e; }
-            fs.writeFileSync(path.join(dir, 'report-' + stamp + '.txt'), text);
-            ctx.ui.text('T_STATUS', 'Writing to ' + m.dir + '...');
-            const tmp = path.join(dir, 'dump-' + stamp + '.tar.part');
-            const fd = await fsOpen(tmp, 'w');
-            let r;
-            try {
-                r = await writeTar(new TarWriter((b) => fsWrite(fd, b, 0, b.length)), text, files);
-                await fsFsync(fd);
-            } finally {
-                await fsClose(fd);
-            }
-            await fsRename(tmp, path.join(dir, 'dump-' + stamp + '.tar'));
-            results.push(m.dir + ': ' + r.files + ' files' + (r.skipped ? ', ' + r.skipped + ' unreadable' : ''));
-        } catch (e) {
-            results.push(m.dir + ': failed (' + errCode(e) + ')');
-            ctx.log.warn('usb ' + m.dir + ': ' + (e && e.stack || e));
-        }
-    }
-    return results.join('; ');
+    await upload(r.found, 'report-' + stamp + '.txt', (write) => write(Buffer.from(text, 'utf8')));
+    ctx.ui.text('T_STATUS', 'Sending files to ' + r.found + '...');
+    let sent = null;
+    await upload(r.found, 'dump-' + stamp + '.tar', (write) => writeTar(new TarWriter(write), text, files).then((x) => { sent = x; }));
+    ctx.ui.text('T_DETAIL', 'Done. You can uninstall SB Probe now.');
+    return 'Sent ' + sent.files + ' files to ' + r.found + (sent.skipped ? ', ' + sent.skipped + ' unreadable' : '');
 }
 
-function stopServer(ctx) {
-    if (state.serverTimer) clearTimeout(state.serverTimer);
-    state.serverTimer = null;
-    if (state.server) {
-        try { state.server.close(); } catch (e) { /* already closed */ }
-        state.server = null;
-        ctx.ui.text('T_DETAIL', 'Wi-Fi server stopped');
-    }
-}
-
-/** Only clients on private networks (the car's hotspot), never a public address. */
-function privateClient(addr) {
-    const a = String(addr || '').replace(/^::ffff:/, '');
-    return /^(10\.|192\.168\.|169\.254\.|127\.)/.test(a) || /^172\.(1[6-9]|2\d|3[01])\./.test(a);
-}
-
-function handle(ctx, req, res) {
-    res.on('error', () => {});
-    req.on('error', () => {});
-    if (!privateClient(req.socket && req.socket.remoteAddress)) {
-        res.writeHead(403, { 'Content-Type': 'text/plain' });
-        res.end('forbidden\n');
-        return;
-    }
-    const fail = (e) => {
-        ctx.log.warn('http: ' + (e && e.stack || e));
-        try { res.destroy(); } catch (x) { /* gone */ }
+async function uploadToGitHub(ctx) {
+    if (!GH_CLIENT_ID) return 'GitHub upload is not set up in this build';
+    const lease = readLease(ctx);
+    if (!lease) return 'No uplink. Join the phone hotspot in Store, Settings, Wi-Fi, then try again';
+    const gh = {
+        web: GH_BASE || 'https://github.com',
+        api: GH_BASE || 'https://api.github.com',
+        uploads: GH_BASE || 'https://uploads.github.com',
+        clientId: GH_CLIENT_ID,
+        repo: GH_REPO,
+        lookup: GH_BASE ? undefined : github.makeLookup(lease),
     };
-    Promise.resolve().then(async () => {
-        if (req.url === '/' || req.url === '/report.txt') {
-            const text = await report(ctx, await collectFiles());
-            res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
-            res.end(text);
-        } else if (req.url === '/dump.tar') {
-            ctx.ui.text('T_STATUS', 'Sending dump.tar over Wi-Fi...');
-            const files = await collectFiles();
-            const text = await report(ctx, files);
-            res.writeHead(200, { 'Content-Type': 'application/x-tar' });
-            let gone = false;
-            res.on('close', () => { gone = true; res.emit('drain'); });
-            const write = (b) => new Promise((resolve, reject) => {
-                if (gone) return reject(new Error('client gone'));
-                if (res.write(b)) resolve();
-                else res.once('drain', () => (gone ? reject(new Error('client gone')) : resolve()));
-            });
-            const r = await writeTar(new TarWriter(write), text, files);
-            res.end();
-            ctx.ui.text('T_STATUS', 'Sent ' + r.files + ' files over Wi-Fi');
-        } else {
-            res.writeHead(404, { 'Content-Type': 'text/plain' });
-            res.end('try / or /dump.tar\n');
-        }
-    }).catch(fail);
-}
-
-function startServer(ctx) {
-    if (state.server) return 'Already serving on port ' + PORT;
-    const server = http.createServer((req, res) => handle(ctx, req, res));
-    server.on('error', (e) => {
-        ctx.ui.text('T_DETAIL', 'Wi-Fi server failed: ' + errCode(e));
-        ctx.log.warn('server: ' + errCode(e));
-        state.server = null;
+    ctx.ui.text('T_STATUS', 'Asking GitHub for a sign-in code...');
+    let token = await github.deviceLogin(gh, (uri, code, expires) => {
+        ctx.ui.text('T_STATUS', 'On your phone open ' + String(uri).replace(/^https?:\/\//, '') + ' and enter ' + code);
+        ctx.ui.text('T_DETAIL', 'Code valid ' + Math.round(expires / 60) + ' min. Waiting for you to approve...');
     });
-    server.on('clientError', (e, socket) => { try { socket.destroy(); } catch (x) { /* gone */ } });
-    server.listen(PORT, '0.0.0.0', () => {
-        ctx.ui.text('T_DETAIL', 'http://<address>:' + PORT + '/dump.tar  ' + addresses().join(', '));
-    });
-    state.server = server;
-    state.serverTimer = setTimeout(() => stopServer(ctx), SERVE_MS);
-    return 'Wi-Fi server on port ' + PORT + ' for 10 minutes';
+    try {
+        ctx.ui.text('T_STATUS', 'Signed in. Collecting files...');
+        ctx.ui.text('T_DETAIL', ' ');
+        const files = await collectFiles();
+        const text = await report(ctx, files);
+        let size = 0;
+        await writeTar(new TarWriter((b) => { size += b.length; return Promise.resolve(); }), text, files);
+        const tag = 'dump-' + new Date().toISOString().replace(/[:.]/g, '-');
+        const release = await github.createRelease(gh, token, tag, 'Uploaded by SB Probe from the head unit.');
+        await github.uploadAsset(gh, token, release, 'report.txt', 'text/plain', Buffer.from(text, 'utf8'));
+        ctx.ui.text('T_STATUS', 'Uploading ' + Math.round(size / 1048576) + ' MB to GitHub...');
+        let sent = null;
+        await github.uploadAsset(gh, token, release, 'dump.tar', 'application/x-tar', {
+            length: size,
+            produce: (write) => writeTar(new TarWriter(write), text, files).then((x) => { sent = x; }),
+        });
+        ctx.ui.text('T_DETAIL', 'Done. You can uninstall SB Probe now.');
+        return 'Uploaded ' + sent.files + ' files to GitHub, release ' + tag;
+    } finally {
+        token = null;
+    }
 }
 
 /** Run one button action at a time; never let an error escape. */
@@ -328,10 +421,12 @@ function watchOdometer(ctx) {
 mgu.run({
     async start(ctx) {
         try {
-            ctx.ui.onClick('BTN_USB', guarded(ctx, 'Copying to USB', copyToUsb));
-            ctx.ui.onClick('BTN_NET', guarded(ctx, 'Starting Wi-Fi server', startServer));
+            ctx.ui.onClick('BTN_GH', guarded(ctx, 'Uploading to GitHub', uploadToGitHub));
+            ctx.ui.onClick('BTN_SEND', guarded(ctx, 'Sending', sendToMac));
             watchOdometer(ctx);
-            ctx.ui.text('T_STATUS', 'Ready. Plug in a FAT32 stick, then tap Copy.');
+            const lease = readLease(ctx);
+            ctx.ui.text('T_STATUS', lease ? 'Ready. Tap Upload to GitHub.'
+                : 'No uplink yet: join the phone hotspot in Store, Settings, Wi-Fi.');
         } catch (e) {
             ctx.log.error('start', e);
         }

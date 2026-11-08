@@ -10,6 +10,15 @@ Status of the unknowns that block milestone 1. "Unit" means checked on this car'
 - The kit is MIT licensed, so it can be vendored with its licence file (`nickgcode/idrive7-apps` does this).
 - `mgu-repo.json` is not added yet because it would point at a kit and app that don't exist in this repo.
 
+## Car results, 2026-11-08 (SB Probe 0.1.0, installed from the GitHub Store source)
+
+- **Install:** accepted, so `KombiIF.statusRangeTankStatus` has a getter on this firmware and `rs` is valid.
+- **Odometer:** `mileageKilometre` reads 27081 km and updates while driving (27083 km a few minutes later). Still to confirm it matches the cluster exactly.
+- **USB stick:** writing fails with `EROFS` at `/media/C1C6-1DF2`. Sticks are mounted read-only, at least for app users. USB export from the app is not possible as-is; see Data safety.
+- **Wi-Fi server:** it starts, but a phone on the car's hotspot gets no answer. The unit's `ip filter` input chain (firewalldz) drops what it does not accept. mgu-store opens its own port 8470 with a root rule (`mgu-updater/README.md`, "Firewall"); an app's uid can't. **Apps can't serve anything to the hotspot.** Interfaces: `wlan_bridge 172.16.222.97` (hotspot), `vlan80 160.48.199.185`.
+- **Next:** SB Probe 0.3.0 uploads to a release in the private `spataionut/mgu-dumps`, signed in through GitHub's device flow with the owner's own GitHub App, which is installed on that repo only. Names resolve through the lease's DNS servers, because the unit's resolver has no internet. It was checked against real github.com from the Mac, not yet with Node 8 on the unit. The 0.2.0 Mac receiver stays as a fallback.
+- **Mac fallback:** the probe connects out instead of serving. It declares `mguInternet`, so mgu-uplink routes its uid through the uplink. It then finds `tools/receive-dump.py` on the uplink's subnet and uploads to it. The kit's `build.py` is patched to write `"mguInternet": true` when `app.json` says `"internet": true`.
+
 ## Odometer (candidate, unverified on the unit)
 
 `apps/live_data/signals.js` in `cauliflowermossgrape/idrive7-apps` reads:
@@ -43,13 +52,13 @@ To check in `someip-interfaces.json`: the full interface name, whether the field
 
 ## Data safety (open)
 
-Whether an app may write outside its own data folder is still unknown. The probe's report answers it: it runs write tests on the stick, `/tmp`, `/var/tmp`, the OAP folders and the home folder.
+USB sticks are read-only for apps (`EROFS`, see Car results), and the firewall stops apps serving to the hotspot, so the planned "export to USB stick" needs another route. The candidates are an upload out through mgu-uplink (needs `mguInternet`, which CLAUDE.md rules out for the real app, so that is the user's call) or a writable location the report finds. Whether an app may write outside its own data folder is still unknown. The probe's report answers it: it runs write tests on the stick, `/tmp`, `/var/tmp`, the OAP folders and the home folder.
 
 **Kit behaviour to change before the real app:** `kit/runtime/mgu.js` calls `process.exit(1)` on an uncaught exception. On the car that counts as a crash, so `CorruptAppsHandler` wipes the data folder. The service log must not depend on it: catch everything in the app, and decide whether to patch the vendored kit.
 
 ## Access
 
-There is no SSH key (the unit was rooted on a PC that's gone), so `tools/unit-dump.sh` can't be used for now. [probe.md](probe.md) gets the same files through a USB-installed app.
+There is no SSH key (the unit was rooted on a PC that's gone), so `tools/unit-dump.sh` can't be used for now. [probe.md](probe.md) gets the same files through an app installed from the Store.
 
 ## Vendored kit
 

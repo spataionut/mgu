@@ -1,11 +1,12 @@
 {
   "id": "sp_probe",
   "title": "SB Probe",
-  "description": "One-off helper for Service Book development. Copies the SOME/IP catalog, one BMW app bundle and the RHMI layout files to a USB stick (or serves them over the car's Wi-Fi), and shows the odometer. Remove it when done.",
-  "version": "0.1.0",
+  "description": "One-off helper for Service Book development. Uploads the SOME/IP catalog, one BMW app bundle and the RHMI layout files to the owner's private GitHub repo (or to a Mac on the same phone hotspot), and shows the odometer. Remove it when done.",
+  "version": "0.3.0",
   "vendor": "sp",
   "loggingId": "OASP",
   "iconGlyph": "SBP",
+  "internet": true,
   "signals": {
     "de.bmw.infotainment.KombiIF": {
       "statusRangeTankStatus": "rs",
@@ -20,8 +21,8 @@
       "items": [
         ["text", "T_ODO", "Odometer: waiting for the car"],
         ["text", "T_STATUS", "Ready"],
-        ["button", "BTN_USB", "Copy files to USB stick"],
-        ["button", "BTN_NET", "Serve files over Wi-Fi (10 min)"],
+        ["button", "BTN_GH", "Upload to GitHub"],
+        ["button", "BTN_SEND", "Send files to Mac (phone hotspot)"],
         ["text", "T_DETAIL", " "]
       ]
     }
