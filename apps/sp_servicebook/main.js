@@ -1,6 +1,7 @@
 'use strict';
 /**
- * Service Book - milestone 1: the log list, Add / Edit with the app's own keyboard, the odometer.
+ * Service Book: the log list, Add / Edit with the app's own keyboard, the odometer (milestone 1);
+ * the Car page: model, VIN, total km, RCA / CASCO / Rovinieta / ITP (0.2.0, car.js, docs.js).
  *
  * The page (1600 x 520, the kit runs the screen on mgu-render): the header, the odometer and an
  * "Add entry" button, then the entries newest first; a row opens it for editing. Add / Edit and
@@ -14,10 +15,16 @@ const mgu = require('./kit/mgu');
 const G = require('./kit/gauges');
 const { withAlpha } = require('./kit/canvas');
 const { LogStore } = require('./store');
+const { cardSheet } = require('./kit/sheet');
 const { formSheet, kmText } = require('./form');
+const { docSheet, KINDS, status } = require('./docs');
+const { drawCar, seriesOf, bodyText, vinOf } = require('./car');
+const { today, addDays } = require('./dates');
 
 const W = 1600, H = 520;
 const KOMBI = 'de.bmw.infotainment.KombiIF';
+const VEHICLE = 'de.bmw.infrastructure.VehicleInformation';
+const PAGES = ['Service log', 'Car'];
 const LIST_Y = 128, ROW_H = 70, ROW_GAP = 8;
 
 function fit(cv, s, size, w, font) {
@@ -31,7 +38,9 @@ function fit(cv, s, size, w, font) {
 mgu.run({
     async start(ctx) {
         const { ui, log } = ctx;
-        let version = 0, odo = null, odoState = 'waiting', msg = '', msgAt = 0;
+        let version = 0, odo = null, odoState = 'waiting', msg = '', msgAt = 0, page = 0;
+        let series = null, body = '';
+        const vin = vinOf(process.env);
         const scroll = { y: 0, max: 0 };
         const changed = () => { version++; };
         const show = (s) => { msg = s; msgAt = Date.now(); changed(); };
@@ -52,6 +61,15 @@ mgu.run({
         }, log).then((sub) => { if (sub && sub.error) { odoState = 'unavailable'; log.warn('odometer: ' + sub.error); changed(); } })
             .catch((e) => { odoState = 'error'; log.error('odometer', e); changed(); });
 
+        /* ---------- series and body: notifier only, so they come when the car sends them ---------- */
+        ctx.signals.watch(VEHICLE, '1', {
+            VehicleType: safe('vehicle type', (v) => {
+                const s2 = seriesOf(v && v.typeVehicle), b = bodyText(v && v.typeBody);
+                if (s2 !== series || b !== body) { series = s2; body = b; changed(); }
+            }),
+        }, log).then((sub) => { if (sub && sub.error) log.warn('vehicle type: ' + sub.error); })
+            .catch((e) => log.error('vehicle type', e));
+
         /* ---------- add / edit ---------- */
         const open = (sh) => { try { return !!ctx.sheet(sh); } catch (e) { log.error('sheet', e); return false; } };
         const edit = safe('edit', (entry) => {
@@ -66,7 +84,58 @@ mgu.run({
         ui.onClick('BTN_ADD', safe('add', () => edit(null)));
         ctx.hideButton('BTN_ADD');
 
+        /* ---------- the Car page ---------- */
+        const { keyboardSheet } = require('./keyboard');
+        const editVariant = safe('variant', () => {
+            const kb = keyboardSheet({
+                title: 'Model variant (e.g. M40i)', value: store.car.variant, maxLen: 30, autoCap: false,
+                onDone: (v) => { store.setVariant(v); show(v ? 'Model: ' + v : 'Variant cleared'); return 'close'; },
+                onCancel: () => 'close',
+            });
+            kb.onClose = changed;
+            if (!open(kb)) show('Typing needs the GPU renderer (mgu-render)');
+        });
+        const docForm = (kind, period, renewFrom) => {
+            const K = KINDS[kind];
+            return docSheet({
+                kind, period, renewFrom, odometer: () => odo, open, onClose: changed,
+                onSave: (p, isNew) => {
+                    const saved = store.saveDoc(kind, p);
+                    // a new ITP is an inspection: it goes in the log too
+                    if (isNew && kind === 'itp') store.save({ date: saved.from || today(), km: saved.km, type: 'Inspection', workshop: saved.who, cost: saved.cost, notes: 'ITP, valid until ' + saved.until });
+                    show(K.label + ' saved: valid until ' + saved.until);
+                },
+                onDelete: (id) => { store.removeDoc(kind, id); show(K.label + ' period deleted'); },
+            });
+        };
+        const openDoc = safe('document', (kind) => {
+            const K = KINDS[kind], cur = store.current(kind);
+            let sh;
+            if (!cur) sh = docForm(kind, null, null);
+            else {
+                const st = status(cur);
+                const earlier = store.car.docs[kind].length - 1;
+                sh = cardSheet({
+                    title: K.label, heading: K.label, subtitle: st.text, color: st.state === 'ok' ? '#3fbf6f' : st.state === 'soon' ? null : '#ef2b2d',
+                    rows: [['Valid from', cur.from || '--'], ['Valid until', cur.until], [K.who || K.number || 'Cost', (K.who ? cur.who : K.number ? cur.number : cur.cost) || '--'],
+                        K.km ? ['Km', cur.km != null ? kmText(cur.km) : '--'] : ['Cost', cur.cost || '--']],
+                    note: earlier ? earlier + ' earlier period' + (earlier > 1 ? 's' : '') + ' kept' : '',
+                    actions: [
+                        { label: 'Edit', run: () => { open(docForm(kind, cur, null)); return null; } },
+                        { label: 'Renew', primary: true, run: () => { open(docForm(kind, null, addDays(cur.until, 1))); return null; } },
+                    ],
+                });
+                sh.onClose = changed;
+            }
+            if (!open(sh)) show('Typing needs the GPU renderer (mgu-render)');
+        });
+        const setPage = (i) => { if (i !== page && i >= 0 && i < PAGES.length) { page = i; changed(); } };
+        ctx.onTab(safe('tab', (i) => setPage(i)));
+        ui.onClick('BTN_PAGE', safe('page', () => setPage((page + 1) % PAGES.length)));
+        ctx.hideButton('BTN_PAGE');
+
         ctx.onScroll(safe('scroll', (dy) => {
+            if (page !== 0) return false;
             const y = Math.max(0, Math.min(scroll.max, scroll.y + dy)), moved = y !== scroll.y;
             scroll.y = y;
             if (moved) changed();
@@ -80,8 +149,21 @@ mgu.run({
             if (msg && Date.now() - msgAt > 8000 && !store.warning) { msg = ''; changed(); }
             if (drawn === version) return;
             drawn = version;
-            const t = ctx.theme(), S = t.sel || t.accent;
+            const t = ctx.theme();
             const cv = ctx.canvas(W, H).clear(t.bg);
+            if (page === 1) {
+                const docs = {};
+                Object.keys(KINDS).forEach((k) => { docs[k] = store.current(k); });
+                drawCar(cv, t, { series, body, variant: store.car.variant, vin, odo, odoState, docs, own: cv.own, today: today(), bottom: H - 8 - (msg ? 40 : 0) },
+                    { variant: editVariant, doc: openDoc });
+            } else drawLog(cv, t);
+            if (msg) cv.text(fit(cv, msg, 24, W - 80), 40, H - 18, 24, store.warning ? (t.warn || '#ffb000') : t.dim, { literal: true });
+            G.frame(cv, t, PAGES, page, []);
+            await ui.image('MAIN_GFX', cv);
+        }
+
+        function drawLog(cv, t) {
+            const S = t.sel || t.accent;
             // odometer and Add
             cv.text('ODOMETER', 40, 70, 18, t.dim, { font: 'bold', spacing: 1.5 });
             cv.text(odo != null ? kmText(odo) + ' km' : odoState === 'waiting' ? 'waiting for the car' : odoState, 40, 110, 36,
@@ -128,14 +210,12 @@ mgu.run({
                     cv.scroll = { y: LIST_Y, bar };
                 }
             }
-            if (msg) cv.text(fit(cv, msg, 24, W - 80), 40, H - 18, 24, store.warning ? (t.warn || '#ffb000') : t.dim, { literal: true });
-            G.frame(cv, t, ['Service log'], 0, []);
-            await ui.image('MAIN_GFX', cv);
         }
 
         ctx.loop('MAIN', 2, render);
         const redraw = () => { changed(); setTimeout(changed, 600); };
         ui.onVisible((name, on) => { if (name === 'MAIN' && on) redraw(); });
+        setInterval(changed, 60000);         // the documents' days left move on at midnight
         render().catch((e) => log.warn('first render: ' + e));
     },
 });

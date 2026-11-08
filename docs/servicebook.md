@@ -1,10 +1,17 @@
-# Service Book 0.1.0: milestone 1 (test build)
+# Service Book 0.2.0
 
-`apps/sp_servicebook`. It has:
+`apps/sp_servicebook`. Milestone 1 (0.1.0) has:
 - a log list, newest first
 - Add and Edit, typed on a keyboard the app draws itself
 - the odometer, read live
 - a log file that survives crashes and restarts
+
+0.2.0 adds a **Car** tab:
+- **Model:** `BMW X3` comes from the series the car reports (G01). You type the variant (M40i) once.
+- **Identity:** the series and body type, the VIN and the total km.
+- **Documents:** a tile each for **RCA, CASCO, Rovinieta and ITP**, showing the days left in green, amber (30 days or fewer) or red (expired).
+  - A tile opens a card with **Edit** and **Renew**. Renew starts the next period the day after the current one ends; the old periods are kept.
+  - Saving a new ITP also adds an "Inspection" entry to the log.
 
 The Due and Stats screens and backup export come only after this works on the car.
 
@@ -12,15 +19,23 @@ The Due and Stats screens and backup export come only after this works on the ca
 
 | File | What it does |
 |---|---|
-| `app.json` | id `sp_servicebook`, one `canvas` screen, `KombiIF.statusRangeTankStatus` (`rs`), no internet |
-| `main.js` | The page: header, odometer, **+ Add entry**, the rows. A row opens it for editing. Every handler is wrapped. |
+| `app.json` | id `sp_servicebook`, one `canvas` screen, `KombiIF.statusRangeTankStatus` (`rs`), `VehicleInformation.VehicleType` (`s`), no internet. Both flags pass `kit/tools/check_signals.py` against the car's catalog. |
+| `main.js` | The pages: header with the **Service log** and **Car** tabs, odometer, **+ Add entry**, the rows. A row opens it for editing. Every handler is wrapped. |
+| `car.js` | The Car page: model (series → name table plus your variant), body, VIN, km, document tiles. |
+| `docs.js` | Document status, and the period form: valid from/until (date pad, Today, length pills such as 12 months = from + 12 months − 1 day), insurer or station, policy/serial number, km for ITP, cost. Delete takes two taps. |
+| `dates.js` | Calendar maths on `YYYY-MM-DD`. |
 | `form.js` | The Add/Edit sheet: type pills, date (−/+/Today), km (number pad, or **Odometer**), notes, cost and workshop (keyboard), Save and Cancel. Delete takes two taps within 4 s. |
-| `keyboard.js` | The keyboard sheet: QWERTY with `- ' , . ?`, a 123 page (digits, `@ # € & * ( ) / : ; + % = " ! _ < > [ ]`), shift (tap twice for caps lock), space, backspace, Cancel and Done. The number pad is for km. |
-| `store.js` | `<dataDir>/servicebook.json`. Writes go temp file → fsync → rename → fsync the folder. Each write first copies the old file to `backups/` and keeps the last 20. A damaged file is kept as `.corrupt-<time>`, and the newest good backup is loaded instead, with a warning on screen. |
+| `keyboard.js` | The keyboard sheet: QWERTY with `- ' , . ?`, a 123 page (digits, `@ # € & * ( ) / : ; + % = " ! _ < > [ ]`), shift (tap twice for caps lock), space, backspace, Cancel and Done. The number pad is for km. The date pad takes 8 digits, shows them as YYYY-MM-DD, and refuses dates that don't exist. |
+| `store.js` | `<dataDir>/servicebook.json`. Writes go temp file → fsync → rename → fsync the folder. Each write first copies the old file to `backups/` and keeps the last 20. A damaged file is kept as `.corrupt-<time>`, and the newest good backup is loaded instead, with a warning on screen. The car details and document periods live in the same file (`car`), so they get the same protection. 0.1.0 files load unchanged. |
 
 The kit's `display.js` has one small patch: a sheet with a `tilt(dir)` method takes controller pushes up and down itself. The keyboard uses this to move between rows.
 
 **Fonts:** the kit's fonts have no arrow glyphs (they come out as empty boxes), so the backspace and shift icons are drawn as shapes.
+
+**Where the car details come from:**
+- **Series and body:** `de.bmw.infrastructure.VehicleInformation.VehicleType`, instance 1. It has a notifier only, so it shows once the car sends it. Until then the page says "series not reported yet".
+- **VIN:** the app's `VIN` environment variable, which the OAP platform sets; BMW's SDK `getVin()` reads the same variable. It's shown on screen only: it's not written to the log file, the app's log or the repo. (`VehicleInformation.ChassisNumber` exists too, but it holds only 7 bytes.)
+- **Model name:** the car doesn't report one. The table in `car.js` maps the series to a name (G01 → X3), and you type the variant.
 
 ## Controls
 
@@ -68,6 +83,12 @@ Install it from the Store's GitHub source once it's pushed to `main`: Store → 
 | 9 | Controller: open Add, then turn, push up and down, press, push left | The focus ring moves over the pills and fields. On the keyboard, push up and down change rows, press types, push left cancels. |
 | 10 | Tap the row, Edit, Save | The change shows. Tap Delete twice, and the row is gone. |
 | 11 | Add 2–3 entries, then **restart the head unit** (hold the volume knob until it reboots, or ignition off, lock, wait 5 min) | Every entry is still there after the restart. |
-| 12 | Uninstall is **not** part of the test | An uninstall deletes the data folder. Use updates only. |
+| 12 | **Car** tab | Shows BMW X3, then G01 · Sports Activity Vehicle (once the car sends it), the VIN matching the registration document, and the km. |
+| 13 | Model **Add variant**, type `M40i`, Done | It shows **BMW X3 M40i**. |
+| 14 | **RCA** tile: valid from (date pad), **12 months**, insurer, Save | The tile shows days left and the colour. Check the date against the policy. |
+| 15 | RCA tile again → **Renew** | The new period starts the day after the old one ends. |
+| 16 | **ITP** tile: add a period with km | The log gets an Inspection entry. |
+| 17 | Restart the head unit | The variant and all documents are still there. |
+| 18 | Uninstall is **not** part of the test | An uninstall deletes the data folder. Use updates only. |
 
 **If something fails, send a photo of the screen.** The most likely failure is #4, if touch doesn't reach sheets in this layout. The fallback then is the controller (#9).

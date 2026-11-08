@@ -3,8 +3,11 @@
  * keyboard.js - a QWERTY keyboard the app draws itself, as a kit sheet (kit/runtime/sheet.js),
  * because OAP has no text input or speller component (docs/research.md).
  *
- *   const kb = keyboardSheet({ title, value, mode: 'text' | 'number', decimal, maxLen, placeholder,
- *                              onDone(value), onCancel() });
+ *   const kb = keyboardSheet({ title, value, mode: 'text' | 'number' | 'date', decimal, maxLen, placeholder,
+ *                              onDone(value), onCancel(), check(value) });
+ *
+ * check(value): an error message keeps the keyboard open and shows it ('' / nothing: fine).
+ * Date mode: the number pad, typed as digits and shown as YYYY-MM-DD; Done gives 'YYYY-MM-DD'.
  *   ctx.sheet(kb);
  *
  * Touch: every key is a tap target (the kit sends a tap on release). The iDrive controller: the knob
@@ -75,12 +78,30 @@ function layoutKeys(rows, opts) {
     return keys;
 }
 
+/** digits (up to 8) as YYYY-MM-DD; typing: the part not typed yet stays out (partial) */
+function fmtDate(d, partial) {
+    const parts = [d.slice(0, 4), d.slice(4, 6), d.slice(6, 8)];
+    if (partial) return parts.filter(Boolean).join('-');
+    return parts.join('-');
+}
+function checkDate(v) {
+    if (v === '') return '';
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(v);
+    if (!m) return 'Type 8 digits: year, month, day';
+    const y = +m[1], mo = +m[2], d = +m[3], dt = new Date(Date.UTC(y, mo - 1, d));
+    if (y < 1990 || y > 2100 || dt.getUTCMonth() !== mo - 1 || dt.getUTCDate() !== d) return 'Not a date';
+    return '';
+}
+
 function keyboardSheet(opts) {
     const o = Object.assign({ mode: 'text', value: '', maxLen: 200, placeholder: '', decimal: false, autoCap: true }, opts || {});
-    const numeric = o.mode === 'number';
+    const date = o.mode === 'date';
+    const numeric = o.mode === 'number' || date;
+    if (date) { o.decimal = false; o.maxLen = 8; o.value = String(o.value || '').replace(/\D/g, '').slice(0, 8); if (!o.check) o.check = checkDate; }
     const kb = {
         title: o.title || 'Type',
         value: String(o.value == null ? '' : o.value),
+        error: '',
         page: numeric ? 'number' : 'letters',
         shift: 0,                       // 0 off, 1 next letter, 2 caps lock
         shiftAt: 0,
@@ -101,6 +122,7 @@ function keyboardSheet(opts) {
         /** Type one key (a tap or the knob's press). Returns what the sheet returns. */
         hit(k) {
             this.flash = k.id; this.flashAt = Date.now();
+            if (k.kind !== 'done') this.error = '';
             switch (k.kind) {
             case 'char': case 'space': return this.typeChar(k.kind === 'space' ? ' ' : this.label(k));
             case 'back': this.value = this.value.slice(0, -1); return null;
@@ -116,7 +138,12 @@ function keyboardSheet(opts) {
                 this.page = k.to; this.focus = Math.min(this.focus, this.keys().length - 1);
                 return null;
             case 'cancel': return o.onCancel ? o.onCancel() : 'close';
-            case 'done': return o.onDone ? o.onDone(numeric ? this.value.replace(/\.$/, '') : this.value.replace(/\s+$/, '')) : 'close';
+            case 'done': {
+                const v = date ? (this.value ? fmtDate(this.value) : '') : numeric ? this.value.replace(/\.$/, '') : this.value.replace(/\s+$/, '');
+                const err = o.check ? o.check(v) : '';
+                if (err) { this.error = err; return null; }
+                return o.onDone ? o.onDone(v) : 'close';
+            }
             default: return null;
             }
         },
@@ -126,7 +153,7 @@ function keyboardSheet(opts) {
                 if (!/[0-9.]/.test(c)) return null;
                 if (c === '.' && (!o.decimal || this.value.indexOf('.') >= 0)) return null;
                 if (c === '.' && !this.value) c = '0.';
-                if (this.value === '0' && c !== '.') this.value = '';
+                if (this.value === '0' && c !== '.' && !date) this.value = '';
             }
             this.value += c;
             if (this.shift === 1 && /[a-zA-Z]/.test(c)) this.shift = 0;
@@ -140,7 +167,7 @@ function keyboardSheet(opts) {
             r.roundRect(FIELD.x, FIELD.y, FIELD.w, FIELD.h, 14, withAlpha('#ffffff', 0.07));
             r.strokeRoundRect(FIELD.x, FIELD.y, FIELD.w, FIELD.h, 14, 2, withAlpha(S, 0.8));
             const size = 36, tx = FIELD.x + 26, ty = FIELD.y + FIELD.h / 2 + 13, room = FIELD.w - 52 - 160;
-            let shown = this.value;
+            let shown = date ? (this.value ? fmtDate(this.value, true) : '') : this.value;
             if (shown && r.textWidth(shown, size, { literal: true }) > room) {
                 while (shown.length > 1 && r.textWidth('…' + shown, size, { literal: true }) > room) shown = shown.slice(1);
                 shown = '…' + shown;
@@ -149,7 +176,9 @@ function keyboardSheet(opts) {
             else if (o.placeholder) r.text(o.placeholder, tx, ty, size, t.dim, { literal: true });
             const cx = tx + (shown ? r.textWidth(shown, size, { literal: true }) : 0) + 3;
             if (Math.floor(Date.now() / 530) % 2 === 0) r.fillRect(cx, FIELD.y + 18, 3, FIELD.h - 36, S);
-            r.text(this.value.length + ' / ' + o.maxLen, FIELD.x + FIELD.w - 24, ty - 2, 20, t.dim, { align: 'right' });
+            if (this.error) r.text(this.error, FIELD.x + FIELD.w - 24, ty - 2, 24, t.warn || '#ffb000', { align: 'right', font: 'bold', literal: true });
+            else if (date) r.text('year, month, day', FIELD.x + FIELD.w - 24, ty - 2, 20, t.dim, { align: 'right' });
+            else r.text(this.value.length + ' / ' + o.maxLen, FIELD.x + FIELD.w - 24, ty - 2, 20, t.dim, { align: 'right' });
             // the keys
             const keys = this.keys();
             this.focus = Math.max(0, Math.min(this.focus, keys.length - 1));
@@ -204,4 +233,4 @@ function keyboardSheet(opts) {
     return kb;
 }
 
-module.exports = { keyboardSheet, layoutKeys, LAYOUTS };
+module.exports = { keyboardSheet, layoutKeys, LAYOUTS, checkDate };

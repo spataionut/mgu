@@ -151,4 +151,105 @@ const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sb-store-'));
     assert.strictEqual(tap(bad, 'save'), null); assert.ok(/EROFS/.test(bad.error));
     frame(bad, 'form-error');
 }
+/* ---------- 0.2.0: dates ---------- */
+const D = require(path.join(js, 'dates'));
+assert.strictEqual(D.addMonths('2026-01-31', 1), '2026-02-28');
+assert.strictEqual(D.addMonths('2026-11-15', 12), '2027-11-15');
+assert.strictEqual(D.daysBetween('2026-11-08', '2027-01-14'), 67);
+const { checkDate } = require(path.join(js, 'keyboard'));
+assert.strictEqual(checkDate('2027-02-29'), 'Not a date');
+assert.strictEqual(checkDate('2028-02-29'), '');
+
+/* ---------- date keyboard ---------- */
+{
+    let got = null;
+    const kb = keyboardSheet({ mode: 'date', value: '2026-11-08', onDone: (v) => { got = v; return 'close'; } });
+    assert.strictEqual(kb.value, '20261108');
+    tap(kb, 'clear'); type(kb, '202702'); frame(kb, 'keyboard-date');
+    assert.strictEqual(tap(kb, 'done'), null, 'incomplete date: stays open'); assert.ok(kb.error);
+    type(kb, '30'); assert.strictEqual(tap(kb, 'done'), null); assert.strictEqual(kb.error, 'Not a date');
+    tap(kb, 'back'); tap(kb, 'back'); type(kb, '28'); assert.strictEqual(tap(kb, 'done'), 'close'); assert.strictEqual(got, '2027-02-28');
+}
+
+/* ---------- documents ---------- */
+const DK = require(path.join(js, 'docs'));
+assert.strictEqual(DK.status(null).state, 'none');
+assert.strictEqual(DK.status({ until: '2026-11-20' }, '2026-11-08').state, 'soon');
+assert.strictEqual(DK.status({ until: '2027-11-20' }, '2026-11-08').state, 'ok');
+assert.deepStrictEqual(DK.status({ until: '2026-11-07' }, '2026-11-08'), { state: 'expired', days: -1, text: 'Expired yesterday' });
+assert.strictEqual(DK.endFor('2026-01-15', ['12 months', 12]), '2027-01-14');
+assert.strictEqual(DK.endFor('2026-01-15', ['7 days', 0, 7]), '2026-01-21');
+{
+    const cd = fs.mkdtempSync(path.join(os.tmpdir(), 'sb-car-'));
+    const s = new LogStore(cd); s.load();
+    // a 0.1.0 file (no car) loads, and gets the car section on the next write
+    s.save({ date: '2026-01-01', type: 'Other' });
+    const raw = JSON.parse(fs.readFileSync(path.join(cd, 'servicebook.json'), 'utf8')); delete raw.car;
+    fs.writeFileSync(path.join(cd, 'servicebook.json'), JSON.stringify(raw));
+    s.load(); assert.deepStrictEqual(s.car.docs.rca, []);
+    let shown = null;
+    const open = (sh) => { shown = sh; return true; };
+    const onSave = (p, isNew) => { s.saveDoc('rca', p); saved.push(isNew); };
+    const saved = [];
+    const f = DK.docSheet({ kind: 'rca', open, onSave, onDelete: (id) => s.removeDoc('rca', id) });
+    shown = f;
+    frame(f, 'doc-new');
+    assert.strictEqual(tap(f, 'save'), null); assert.ok(/until/.test(f.error));
+    tap(f, 'from'); tap(shown, 'clear'); type(shown, '20260115'); tap(shown, 'done'); assert.strictEqual(shown, f);
+    tap(f, 'len:12 months'); assert.strictEqual(f.e.until, '2027-01-14');
+    tap(f, 'who'); type(shown, 'groupama'); tap(shown, 'done');
+    tap(f, 'number'); tap(shown, 'mode'); type(shown, '123'); tap(shown, 'mode'); tap(shown, 'done');
+    frame(f, 'doc-filled');
+    assert.strictEqual(tap(f, 'save'), 'close');
+    assert.strictEqual(s.current('rca').who, 'Groupama'); assert.strictEqual(s.current('rca').number, '123');
+    // renew: starts the day after; the new one is current, the old one kept
+    const rn = DK.docSheet({ kind: 'rca', renewFrom: D.addDays(s.current('rca').until, 1), open, onSave, onDelete() {} });
+    tap(rn, 'len:12 months'); tap(rn, 'save');
+    assert.strictEqual(s.current('rca').from, '2027-01-15'); assert.strictEqual(s.current('rca').until, '2028-01-14');
+    assert.strictEqual(s.car.docs.rca.length, 2); assert.deepStrictEqual(saved, [true, true]);
+    // from after until: refused
+    const bad = DK.docSheet({ kind: 'casco', period: { from: '2026-05-01', until: '2026-04-01' }, open, onSave() {}, onDelete() {} });
+    assert.strictEqual(tap(bad, 'save'), null); assert.ok(/after/.test(bad.error));
+    assert.throws(() => s.saveDoc('casco', { from: '2026-05-01', until: '2026-04-01' }));
+    // ITP asks km (odometer), no number; rovinieta: no "who"
+    const itp = DK.docSheet({ kind: 'itp', odometer: () => 27083, open, onSave() {}, onDelete() {} });
+    const it = frame(itp, 'doc-itp').map((q) => q.key);
+    assert.ok(it.indexOf('km') >= 0 && it.indexOf('odo') >= 0 && it.indexOf('number') < 0); assert.strictEqual(itp.e.km, '27083');
+    const rv = frame(DK.docSheet({ kind: 'rovinieta', open, onSave() {}, onDelete() {} }), 'doc-rovinieta').map((q) => q.key);
+    assert.ok(rv.indexOf('who') < 0 && rv.indexOf('len:7 days') >= 0);
+    // reload keeps it all; delete
+    const again = new LogStore(cd); again.load();
+    assert.strictEqual(again.car.docs.rca.length, 2);
+    again.setVariant('M40i'); assert.strictEqual(new LogStore(cd).load() && JSON.parse(fs.readFileSync(path.join(cd, 'servicebook.json'))).car.variant, 'M40i');
+    assert.ok(again.removeDoc('rca', again.current('rca').id)); assert.strictEqual(again.current('rca').from, '2026-01-15');
+}
+
+/* ---------- the Car page ---------- */
+{
+    const C = require(path.join(js, 'car'));
+    assert.strictEqual(C.seriesOf('G01'), 'G01'); assert.strictEqual(C.seriesOf(81), 'G01'); assert.strictEqual(C.seriesOf('KEINE_ANGABE'), null);
+    assert.strictEqual(C.bodyText('SPORTS_ACTIVITY_VEHICLE'), 'Sports Activity Vehicle');
+    assert.strictEqual(C.modelName('G01', 'M40i'), 'BMW X3 M40i');
+    assert.strictEqual(C.vinOf({ VIN: 'wbatestvin0000000' }), 'WBATESTVIN0000000'); assert.strictEqual(C.vinOf({}), '');
+    const docs = {
+        rca: { from: '2026-01-15', until: '2027-01-14', who: 'Groupama', number: 'RO123' },
+        casco: { from: '2025-11-20', until: '2026-11-19', who: 'Allianz-Tiriac' },
+        rovinieta: { until: '2026-11-01', number: '' },
+        itp: null,
+    };
+    const draw = (own, name) => {
+        const r = new Recorder(1600, 520);
+        r.clear(theme.bg);
+        const hits = [];
+        C.drawCar(r, theme, { series: 'G01', body: 'Sports Activity Vehicle', variant: 'M40i', vin: 'WBA00000000TEST00', odo: 27083, odoState: 'ok', docs, own, today: '2026-11-08' },
+            { variant: () => hits.push('variant'), doc: (k) => hits.push(k) });
+        if (shots) { const cv = new Canvas(1600, 520); play(r.words(), cv); fs.writeFileSync(path.join(shots, name + '.png'), cv.png()); }
+        return { r, hits };
+    };
+    const d = draw(true, 'car-page');
+    const keys = d.r.targets.map((q) => q.key);
+    ['variant', 'doc:rca', 'doc:casco', 'doc:rovinieta', 'doc:itp'].forEach((k) => assert.ok(keys.indexOf(k) >= 0, k));
+    d.r.targets.forEach((q) => q.run()); assert.deepStrictEqual(d.hits, ['variant', 'rca', 'casco', 'rovinieta', 'itp']);
+    assert.strictEqual(draw(false, 'car-page-readonly').r.targets.length, 0, 'software path: no taps');
+}
 console.log('servicebook: ok');

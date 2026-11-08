@@ -10,6 +10,9 @@
  * servicebook.json.corrupt-<t> and the newest backup that parses is used instead (warning set).
  *
  * Entry: { id, date: 'YYYY-MM-DD', km: number|null, type, notes, cost, workshop, created, updated }
+ * Car (0.2.0; absent in 0.1.0 files): { variant, docs: { rca: [period], casco, rovinieta, itp } }
+ * Period: { id, from, until ('YYYY-MM-DD' or ''), who (insurer / ITP station), number, cost, km, created, updated },
+ * newest first; the first one is the current one.
  * Node 8: no fs.promises, no recursive mkdir.
  */
 const fs = require('fs');
@@ -19,6 +22,8 @@ const FILE = 'servicebook.json';
 const KEEP = 20;
 const TYPES = ['Oil & filter', 'Brakes', 'Spark plugs', 'Tyres', 'Air/cabin filter', 'Fluids', 'Battery', 'Coding/Mods', 'Inspection', 'Other'];
 
+const DOCS = [['rca', 'RCA'], ['casco', 'CASCO'], ['rovinieta', 'Rovinieta'], ['itp', 'ITP']];
+const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const stamp = (d) => (d || new Date()).toISOString().replace(/[-:.]/g, '');      // 20261108T120000123Z: sorts by time
 function mkdir(p) { try { fs.mkdirSync(p); } catch (e) { if (e.code !== 'EEXIST') throw e; } }
 function fsyncDir(dir) {
@@ -52,10 +57,31 @@ let seq = 0;
 function newId() { return Date.now().toString(36) + '-' + (++seq).toString(36); }
 const order = (a, b) => (a.date !== b.date ? (a.date < b.date ? 1 : -1) : (b.km || 0) - (a.km || 0) || (a.created < b.created ? 1 : -1));
 
+function cleanPeriod(p) {
+    if (!p || typeof p !== 'object') throw new Error('period is not an object');
+    if (p.from && !DATE.test(p.from)) throw new Error('bad date: ' + p.from);
+    if (!DATE.test(String(p.until))) throw new Error('bad date: ' + p.until);
+    if (p.from && p.from > p.until) throw new Error('valid from is after valid until');
+    const km = p.km === '' || p.km == null ? null : Number(p.km);
+    if (km !== null && (!isFinite(km) || km < 0 || km > 2e6)) throw new Error('bad km: ' + p.km);
+    const str = (v, n) => String(v == null ? '' : v).slice(0, n);
+    return {
+        id: str(p.id, 40) || newId(), from: p.from || '', until: p.until,
+        who: str(p.who, 80), number: str(p.number, 60), cost: str(p.cost, 40), km: km === null ? null : Math.round(km),
+        created: p.created || new Date().toISOString(), updated: p.updated || p.created || new Date().toISOString(),
+    };
+}
+const byUntil = (a, b) => (a.until !== b.until ? (a.until < b.until ? 1 : -1) : (a.created < b.created ? 1 : -1));
+function cleanCar(c) {
+    c = c && typeof c === 'object' ? c : {};
+    const docs = {};
+    DOCS.forEach((d) => { docs[d[0]] = (c.docs && Array.isArray(c.docs[d[0]]) ? c.docs[d[0]] : []).map(cleanPeriod).sort(byUntil); });
+    return { variant: String(c.variant == null ? '' : c.variant).slice(0, 60), docs };
+}
 function parse(text) {
     const d = JSON.parse(text);
     if (!d || d.schema !== 1 || !Array.isArray(d.entries)) throw new Error('not a Service Book file');
-    return d.entries.map(clean);
+    return { entries: d.entries.map(clean), car: cleanCar(d.car) };
 }
 
 class LogStore {
@@ -65,6 +91,7 @@ class LogStore {
         this.backups = path.join(dataDir, 'backups');
         this.log = log || { info() {}, warn() {}, error() {} };
         this.entries = [];
+        this.car = cleanCar(null);
         this.warning = '';
         this.loaded = false;
     }
@@ -76,14 +103,14 @@ class LogStore {
         if (text === null) {
             // no main file: a write may have stopped between backup and rename; a backup has the data
             const b = this._newestBackup();
-            this.entries = b ? b.entries : [];
+            this._use(b);
             if (b) { this.warning = 'Log restored from backup ' + b.name; this._write(); }
         } else {
-            try { this.entries = parse(text); } catch (e) {
+            try { this._use(parse(text)); } catch (e) {
                 const bad = this.file + '.corrupt-' + stamp();
                 try { fs.renameSync(this.file, bad); } catch (e2) { /* */ }
                 const b = this._newestBackup();
-                this.entries = b ? b.entries : [];
+                this._use(b);
                 this.warning = 'Log file was damaged (' + e.message + '); ' + (b ? 'restored backup ' + b.name : 'no backup found') + '. Kept as ' + path.basename(bad);
                 this.log.warn(this.warning);
                 this._write();
@@ -94,13 +121,15 @@ class LogStore {
         return this.entries;
     }
 
+    _use(d) { this.entries = d ? d.entries : []; this.car = d ? d.car : cleanCar(null); }
+
     _backupNames() {
         try { return fs.readdirSync(this.backups).filter((n) => /^servicebook-.*\.json$/.test(n)).sort(); } catch (e) { return []; }
     }
     _newestBackup() {
         const names = this._backupNames();
         for (let i = names.length - 1; i >= 0; i--) {
-            try { return { name: names[i], entries: parse(fs.readFileSync(path.join(this.backups, names[i]), 'utf8')) }; } catch (e) { /* try older */ }
+            try { return Object.assign({ name: names[i] }, parse(fs.readFileSync(path.join(this.backups, names[i]), 'utf8'))); } catch (e) { /* try older */ }
         }
         return null;
     }
@@ -113,7 +142,7 @@ class LogStore {
             do name = 'servicebook-' + at + '-' + ('00' + (n++)).slice(-3) + '.json'; while (fs.existsSync(path.join(this.backups, name)));
             writeAtomic(path.join(this.backups, name), cur);
         } catch (e) { if (e.code !== 'ENOENT') this.log.warn('backup: ' + e.message); }
-        writeAtomic(this.file, JSON.stringify({ schema: 1, app: 'sp_servicebook', saved: new Date().toISOString(), entries: this.entries }, null, 1));
+        writeAtomic(this.file, JSON.stringify({ schema: 1, app: 'sp_servicebook', saved: new Date().toISOString(), entries: this.entries, car: this.car }, null, 1));
         const names = this._backupNames();
         names.slice(0, Math.max(0, names.length - KEEP)).forEach((n) => { try { fs.unlinkSync(path.join(this.backups, n)); } catch (e) { /* */ } });
     }
@@ -136,6 +165,32 @@ class LogStore {
         try { this._write(); } catch (err) { this.entries = prev; throw err; }
         return true;
     }
+
+    /* ---------- car details ---------- */
+    _commitCar(change) {
+        const prev = this.car, next = JSON.parse(JSON.stringify(prev));
+        const out = change(next);
+        this.car = cleanCar(next);
+        try { this._write(); } catch (err) { this.car = prev; throw err; }
+        return out;
+    }
+    setVariant(v) { return this._commitCar((c) => { c.variant = String(v || '').trim(); }); }
+    /** The current period of a document (or null). */
+    current(kind) { return (this.car.docs[kind] || [])[0] || null; }
+    /** Add a period, or replace the one with the same id. Returns the stored period. */
+    saveDoc(kind, period) {
+        if (!this.car.docs[kind]) throw new Error('unknown document ' + kind);
+        const now = new Date().toISOString();
+        const old = period.id ? this.car.docs[kind].find((p) => p.id === period.id) : null;
+        const p = cleanPeriod(Object.assign({}, period, { created: old ? old.created : now, updated: now }));
+        this._commitCar((c) => { c.docs[kind] = c.docs[kind].filter((x) => x.id !== p.id).concat([p]); });
+        return p;
+    }
+    removeDoc(kind, id) {
+        if (!this.car.docs[kind] || !this.car.docs[kind].some((p) => p.id === id)) return false;
+        this._commitCar((c) => { c.docs[kind] = c.docs[kind].filter((x) => x.id !== id); });
+        return true;
+    }
 }
 
-module.exports = { LogStore, TYPES, clean, parse, KEEP };
+module.exports = { LogStore, TYPES, DOCS, clean, cleanPeriod, parse, KEEP };

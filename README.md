@@ -2,7 +2,7 @@
 
 A service log for the BMW iDrive 7 head unit (MGU): every service and repair done on the car, plus what's due next. Installed and updated through [mgu-store](https://github.com/robertnisipeanu/mgu-store).
 
-**Status:** milestone 1 test build. **Service Book** 0.1.0 (`apps/sp_servicebook`) has the log list, Add/Edit typed on the app's own touch keyboard, and the live odometer; the car checklist is in [docs/servicebook.md](docs/servicebook.md). **SB Probe** (`apps/sp_probe`) is a one-off helper that uploads reference files from the head unit to a private GitHub repo (or a Mac) without SSH ([docs/probe.md](docs/probe.md)). See [docs/research.md](docs/research.md) for what is confirmed and what is still open.
+**Status:** **Service Book** 0.2.0 (`apps/sp_servicebook`) has the log list, Add/Edit typed on the app's own touch keyboard, the live odometer, and a Car tab (model, VIN, km, RCA / CASCO / Rovinieta / ITP); the car checklist is in [docs/servicebook.md](docs/servicebook.md). **SB Probe** (`apps/sp_probe`) is a one-off helper that uploads reference files from the head unit to a private GitHub repo (or a Mac) without SSH ([docs/probe.md](docs/probe.md)). See [docs/research.md](docs/research.md) for what is confirmed and what is still open.
 
 ## Planned features
 

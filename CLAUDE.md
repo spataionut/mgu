@@ -20,8 +20,9 @@ A personal app for the BMW iDrive 7 head unit (MGU) that keeps a log of every se
    - Cost, workshop, notes are free text.
    - **Text input uses a keyboard the app draws itself, typed by touch (and the iDrive knob).** The user wants touchscreen typing. No phone/web page for input; that idea was rejected. BMW's native speller was the first choice, but OAP has no input/speller component (MainApp's component table, checked 2026-11-08, see `docs/research.md`), so on 2026-11-08 the user chose an app-drawn keyboard: a kit "canvas" screen drawn through mgu-render, with the keyboard as a kit sheet.
 3. **Due**: recurring items with intervals in km and/or time (e.g. oil every 10,000 km or 12 months), shown as "due in X km / Y days" with colour states (ok / soon / overdue). A "Done today" action logs a new entry for that item.
-4. **Stats** (later): spend per year and per category, cost per km.
-5. **Backup**: export/import the whole log as JSON to/from a USB stick.
+4. **Car** (0.2.0): model (series from `VehicleInformation.VehicleType`, plus a typed variant), VIN (the app's `VIN` env, on screen only, never in git or logs), total km, and Romanian documents RCA, CASCO, Rovinieta and ITP with validity periods and days left. A new ITP also logs an Inspection.
+5. **Stats** (later): spend per year and per category, cost per km.
+6. **Backup**: export/import the whole log as JSON to/from a USB stick.
 
 ## Hard requirements and rules
 

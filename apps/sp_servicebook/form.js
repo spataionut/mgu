@@ -18,12 +18,7 @@ const W = 1600, TOP = 46;
 const X = 40, FW = W - 2 * X;
 const DELETE_CONFIRM_MS = 4000;
 
-const pad = (n) => (n < 10 ? '0' : '') + n;
-function today() { const d = new Date(); return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()); }
-function addDays(s, n) {
-    const p = s.split('-').map(Number), d = new Date(Date.UTC(p[0], p[1] - 1, p[2] + n));
-    return d.getUTCFullYear() + '-' + pad(d.getUTCMonth() + 1) + '-' + pad(d.getUTCDate());
-}
+const { today, addDays } = require('./dates');
 const kmText = (km) => (km == null || km === '' ? '' : String(km).replace(/\B(?=(\d{3})+(?!\d))/g, ' '));
 
 function fit(r, s, size, w, font) {
@@ -137,4 +132,4 @@ function formSheet(opts) {
     return f;
 }
 
-module.exports = { formSheet, today, addDays, kmText };
+module.exports = { formSheet, today, addDays, kmText, fit };
