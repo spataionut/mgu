@@ -252,4 +252,33 @@ assert.strictEqual(DK.endFor('2026-01-15', ['7 days', 0, 7]), '2026-01-21');
     d.r.targets.forEach((q) => q.run()); assert.deepStrictEqual(d.hits, ['variant', 'rca', 'casco', 'rovinieta', 'itp']);
     assert.strictEqual(draw(false, 'car-page-readonly').r.targets.length, 0, 'software path: no taps');
 }
+/* ---------- the Custom Code guide ---------- */
+{
+    const CC = require(path.join(js, 'customcode'));
+    assert.deepStrictEqual(CC.FEATURES.map((f) => f[0] + ':' + f[1]), ['1:Switchable Maps', '3:Max Cooling', '6:Exhaust Flap', '7:Valet Mode']);
+    assert.deepStrictEqual(CC.FEATURES[0][2].map((v) => v[0] + ':' + v[1]), ['0:100 RON', '1:95 RON', '2:Stock']);
+    assert.deepStrictEqual(CC.FEATURES[2][2], [[0, 'Automatic'], [1, 'Closed'], [2, 'Opened']]);
+    assert.strictEqual(CC.angleOf(0), 200); assert.strictEqual(CC.angleOf(8), -40);
+    const st = CC.guideState();
+    let n = 0;
+    const draw = (own, name) => {
+        const r = new Recorder(1600, 520);
+        r.clear(theme.bg);
+        CC.drawGuide(r, theme, { own }, st, () => n++);
+        const G = require(path.join(js, 'kit/gauges'));
+        G.frame(r, theme, ['Service log', 'Car', 'Custom Code'], 2, []);
+        if (shots) { const cv = new Canvas(1600, 520); play(r.words(), cv); fs.writeFileSync(path.join(shots, name + '.png'), cv.png()); }
+        return r;
+    };
+    const r = draw(true, 'guide');
+    r.targets.forEach((q) => assert.ok(q.x >= 0 && q.x + q.w <= 1600 && q.y >= 46 && q.y + q.h <= 512, q.key + ' off the page'));
+    r.targets.find((q) => q.key === 'cc:2:2').run();
+    assert.deepStrictEqual([st.feature, st.value, n], [2, 2, 1]);
+    draw(true, 'guide-flap-opened');
+    r.targets.find((q) => q.key === 'cc:0:1').run();
+    draw(true, 'guide-map-95');
+    r.targets.find((q) => q.key === 'cc:3').run();
+    assert.deepStrictEqual([st.feature, st.value], [3, null]);
+    assert.strictEqual(draw(false, 'guide-readonly').targets.length, 0);
+}
 console.log('servicebook: ok');

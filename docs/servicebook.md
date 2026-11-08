@@ -1,4 +1,4 @@
-# Service Book 0.2.0
+# Service Book 0.3.0
 
 `apps/sp_servicebook`. Milestone 1 (0.1.0) has:
 - a log list, newest first
@@ -13,15 +13,22 @@
   - A tile opens a card with **Edit** and **Renew**. Renew starts the next period the day after the current one ends; the old periods are kept.
   - Saving a new ITP also adds an "Inspection" entry to the log.
 
-The Due and Stats screens and backup export come only after this works on the car.
+0.3.0 adds a **Custom Code** tab: a guide to MG Flasher's Custom Code Menu (CCM), so the steps don't have to be remembered.
+- In the CCM, the cruise-control buttons move through the menu, and the tachometer needle shows the submenu (feature) and then the value.
+- The tab lists the features in use, with their needle positions: **Switchable Maps** (1K: this car's maps, 100 RON max power 0K, 95 RON max power 1K, stock 2K), **Max Cooling** (3K: Disable 0K, Enable 1K), **Exhaust Flap** (6K: Automatic 0K, Closed 1K, Opened 2K), **Valet Mode** (7K: Disable 0K, Enable 1K). 0K (READY) is Exit. Burbles, Antilag RPM and Ethanol Content Override are left out on purpose.
+- Tap a feature and the drawn tachometer points at its submenu. Tap a value and it points at that value.
+- **Reference only.** The app sends nothing to the car: the catalog has no way for an app to press steering-wheel buttons or reach the DME (checked 2026-11-08).
+
+Next: import from a USB stick, then the Due and Stats screens.
 
 ## Files
 
 | File | What it does |
 |---|---|
 | `app.json` | id `sp_servicebook`, one `canvas` screen, `KombiIF.statusRangeTankStatus` (`rs`), `VehicleInformation.VehicleType` (`s`), no internet. Both flags pass `kit/tools/check_signals.py` against the car's catalog. |
-| `main.js` | The pages: header with the **Service log** and **Car** tabs, odometer, **+ Add entry**, the rows. A row opens it for editing. Every handler is wrapped. |
+| `main.js` | The pages: header with the **Service log**, **Car** and **Custom Code** tabs, odometer, **+ Add entry**, the rows. A row opens it for editing. Every handler is wrapped. |
 | `car.js` | The Car page: model (series → name table plus your variant), body, VIN, km, document tiles. |
+| `customcode.js` | The Custom Code page: the CCM table (`FEATURES`) and a drawn tachometer whose needle shows the picked submenu or value. |
 | `docs.js` | Document status, and the period form: valid from/until (date pad, Today, length pills such as 12 months = from + 12 months − 1 day), insurer or station, policy/serial number, km for ITP, cost. Delete takes two taps. |
 | `dates.js` | Calendar maths on `YYYY-MM-DD`. |
 | `form.js` | The Add/Edit sheet: type pills, date (−/+/Today), km (number pad, or **Odometer**), notes, cost and workshop (keyboard), Save and Cancel. Delete takes two taps within 4 s. |
@@ -89,6 +96,9 @@ Install it from the Store's GitHub source once it's pushed to `main`: Store → 
 | 15 | RCA tile again → **Renew** | The new period starts the day after the old one ends. |
 | 16 | **ITP** tile: add a period with km | The log gets an Inspection entry. |
 | 17 | Restart the head unit | The variant and all documents are still there. |
+| 18a | **Custom Code** tab | Four features with their needle positions. Tapping a value moves the drawn needle. Compare with MG's menu on the real tachometer once. |
 | 18 | Uninstall is **not** part of the test | An uninstall deletes the data folder. Use updates only. |
 
 **If something fails, send a photo of the screen.** The most likely failure is #4, if touch doesn't reach sheets in this layout. The fallback then is the controller (#9).
+
+**Result on the car (2026-11-08):** passed. The touch keyboard works, the odometer shows the car's km, the Car tab shows G01 · Sports Activity Vehicle (so `VehicleType` arrives as enum names) and a 17-character VIN, an RCA period shows the right days left, and the log entry, RCA period and variant all survived a head-unit restart. Milestone 1 is done.

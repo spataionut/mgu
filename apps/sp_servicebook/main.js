@@ -1,7 +1,8 @@
 'use strict';
 /**
  * Service Book: the log list, Add / Edit with the app's own keyboard, the odometer (milestone 1);
- * the Car page: model, VIN, total km, RCA / CASCO / Rovinieta / ITP (0.2.0, car.js, docs.js).
+ * the Car page: model, VIN, total km, RCA / CASCO / Rovinieta / ITP (0.2.0, car.js, docs.js);
+ * the Custom Code page: a guide to MG Flasher's Custom Code menu, reference only (0.3.0, customcode.js).
  *
  * The page (1600 x 520, the kit runs the screen on mgu-render): the header, the odometer and an
  * "Add entry" button, then the entries newest first; a row opens it for editing. Add / Edit and
@@ -19,12 +20,13 @@ const { cardSheet } = require('./kit/sheet');
 const { formSheet, kmText } = require('./form');
 const { docSheet, KINDS, status } = require('./docs');
 const { drawCar, seriesOf, bodyText, vinOf } = require('./car');
+const { drawGuide, guideState } = require('./customcode');
 const { today, addDays } = require('./dates');
 
 const W = 1600, H = 520;
 const KOMBI = 'de.bmw.infotainment.KombiIF';
 const VEHICLE = 'de.bmw.infrastructure.VehicleInformation';
-const PAGES = ['Service log', 'Car'];
+const PAGES = ['Service log', 'Car', 'Custom Code'];
 const LIST_Y = 128, ROW_H = 70, ROW_GAP = 8;
 
 function fit(cv, s, size, w, font) {
@@ -41,6 +43,7 @@ mgu.run({
         let version = 0, odo = null, odoState = 'waiting', msg = '', msgAt = 0, page = 0;
         let series = null, body = '';
         const vin = vinOf(process.env);
+        const guide = guideState();
         const scroll = { y: 0, max: 0 };
         const changed = () => { version++; };
         const show = (s) => { msg = s; msgAt = Date.now(); changed(); };
@@ -156,6 +159,8 @@ mgu.run({
                 Object.keys(KINDS).forEach((k) => { docs[k] = store.current(k); });
                 drawCar(cv, t, { series, body, variant: store.car.variant, vin, odo, odoState, docs, own: cv.own, today: today(), bottom: H - 8 - (msg ? 40 : 0) },
                     { variant: editVariant, doc: openDoc });
+            } else if (page === 2) {
+                drawGuide(cv, t, { own: cv.own, bottom: H - 8 - (msg ? 40 : 0) }, guide, changed);
             } else drawLog(cv, t);
             if (msg) cv.text(fit(cv, msg, 24, W - 80), 40, H - 18, 24, store.warning ? (t.warn || '#ffb000') : t.dim, { literal: true });
             G.frame(cv, t, PAGES, page, []);
