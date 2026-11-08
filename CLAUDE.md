@@ -23,7 +23,7 @@ A personal app for the BMW iDrive 7 head unit (MGU) that keeps a log of every se
 4. **Car** (0.2.0): model (series from `VehicleInformation.VehicleType`, plus a typed variant), VIN (the app's `VIN` env, on screen only, never in git or logs), total km, and Romanian documents RCA, CASCO, Rovinieta and ITP with validity periods and days left. A new ITP also logs an Inspection.
 5. **Custom Code** (0.3.0): a reference guide to MG Flasher's Custom Code Menu (needle positions for Switchable Maps, Max Cooling, Exhaust Flap, Valet Mode). Reference only: apps can't press steering-wheel buttons or reach the DME (catalog checked 2026-11-08).
 6. **Stats** (later): spend per year and per category, cost per km.
-7. **Backup**: import from a USB stick is in 0.4.0 (`servicebook-import.json` at the stick's top, add-only, all or nothing). Export to USB is blocked: sticks are read-only for apps (`EROFS`).
+7. **Backup**: import from a USB stick is in 0.4.0 (`servicebook-import.json` at the stick's top, add-only, all or nothing). Export to USB is blocked: sticks are read-only for apps (`EROFS`). Reading a stick works (checked in the car 2026-11-08).
 
 ## Hard requirements and rules
 

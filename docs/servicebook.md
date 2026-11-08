@@ -128,3 +128,8 @@ Install it from the Store's GitHub source once it's pushed to `main`: Store → 
 **If something fails, send a photo of the screen.** The most likely failure is #4, if touch doesn't reach sheets in this layout. The fallback then is the controller (#9).
 
 **Result on the car (2026-11-08):** passed. The touch keyboard works, the odometer shows the car's km, the Car tab shows G01 · Sports Activity Vehicle (so `VehicleType` arrives as enum names) and a 17-character VIN, an RCA period shows the right days left, and the log entry, RCA period and variant all survived a head-unit restart. Milestone 1 is done.
+
+**0.3.0 and 0.4.0 on the car (2026-11-08):** passed.
+- **18a:** the Custom Code tab draws the dial and the four features as designed.
+- **18b:** USB import read the file from the stick, so apps can read sticks. It added 6 entries and 4 document periods. The log shows 7 entries, and the Car tiles show RCA, CASCO, Rovinieta and ITP with days left.
+- Everything survived a head-unit restart.
