@@ -18,7 +18,7 @@ A personal app for the BMW iDrive 7 head unit (MGU) that keeps a log of every se
    - Date defaults to today.
    - **km is filled automatically from the car's odometer** (editable).
    - Cost, workshop, notes are free text.
-   - **Text input uses BMW's native on-screen keyboard (the "speller") through an RHMI input component.** The user wants touchscreen typing. No phone/web page for input; that idea was rejected.
+   - **Text input uses a keyboard the app draws itself, typed by touch (and the iDrive knob).** The user wants touchscreen typing. No phone/web page for input; that idea was rejected. BMW's native speller was the first choice, but OAP has no input/speller component (MainApp's component table, checked 2026-11-08, see `docs/research.md`), so on 2026-11-08 the user chose an app-drawn keyboard: a kit "canvas" screen drawn through mgu-render, with the keyboard as a kit sheet.
 3. **Due**: recurring items with intervals in km and/or time (e.g. oil every 10,000 km or 12 months), shown as "due in X km / Y days" with colour states (ok / soon / overdue). A "Done today" action logs a new entry for that item.
 4. **Stats** (later): spend per year and per category, cost per km.
 5. **Backup**: export/import the whole log as JSON to/from a USB stick.
@@ -32,7 +32,7 @@ A personal app for the BMW iDrive 7 head unit (MGU) that keeps a log of every se
 
 ## Data safety (important)
 
-The OAP platform's `CorruptAppsHandler` **wipes an app's data folder if the app crashes, and uninstalls it on the second crash.** This log is personal and irreplaceable, so:
+The OAP platform's `CorruptAppsHandler` **wipes an app's data folder if the app crashes, and uninstalls it on the second crash.** On this car mgu-store's app-privacy patch changes that for apps the Store installs (`mguLocalOnly: true`): a crash only restarts them, at most 5 times in 10 minutes, without a wipe (checked in MainApp on 2026-11-08, `docs/research.md`). An uninstall still deletes the data. This log is personal and irreplaceable, so:
 - Write the log atomically (temp file + rename) and keep a rolling backup copy.
 - Investigate whether the app can also write a backup outside its own data folder (e.g. a path its permissions allow). If not, make USB export prominent and easy.
 - Wrap all handlers so an exception never kills the process.
@@ -55,7 +55,7 @@ The OAP platform's `CorruptAppsHandler` **wipes an app's data folder if the app 
 2. With the user, copy the catalog and one BMW app bundle off the unit into ignored local folders; extract the SDK for local preview only.
 3. Find the odometer / total mileage field in the catalog (search for mileage, odometer, kilometer, `km` in field names; check getter/notifier and scaling).
 4. Find how RHMI text input with the speller is declared and how the entered text comes back to the app.
-5. **Milestone 1 (test build):** a minimal app with one list screen, an "Add" screen with one text field using the speller, and a live mileage readout. Preview it locally, install it via USB, and verify on the car that (a) the speller opens and works by touch, (b) the text comes back, (c) mileage is correct, (d) data survives a head-unit restart.
+5. **Milestone 1 (test build):** a minimal app with one list screen, an "Add" screen with one text field using the app-drawn keyboard, and a live mileage readout. Preview it locally, install it from the Store, and verify on the car that (a) the keyboard opens and works by touch, (b) the text comes back, (c) mileage is correct, (d) data survives a head-unit restart.
 6. Only after milestone 1 works on the car: build the full log, due-items, export/import and stats.
 
 ## Working style

@@ -323,6 +323,12 @@ class Display {
         const tilt = TILT[df] && !(L && TILT[L.df] === TILT[df]) ? TILT[df] : null;
         const tl = this._tabList(), here = Math.max(0, tl.sel >= 0 ? tl.sel : tl.settings);
         if (this.sheet) {
+            // Service Book patch: a sheet with tilt(dir) takes pushes N/S/E itself (the keyboard's rows); false: as below
+            if (!this.sheetHead && tilt && tilt !== 'W' && this.sheet.tilt) {
+                let took = false;
+                try { took = !!this.sheet.tilt(tilt); } catch (e) { this.log.error('sheet tilt', e); }
+                if (took) { this._paintSheet(); return; }
+            }
             // pushed up: the header's tabs (the knob along them, press opens one); pushed down: back to the sheet
             if (tilt === 'N' && !this.sheetHead && tl.tabs.length && (!this.sheet.top || this.sheet.top())) { this.sheetHead = true; this._focus({ k: 'tab:' + here, tab: here }); this._paintSheet(); return; }
             if (!this.sheetHead && (tilt === 'N' || tilt === 'S')) { this.sheet.move(tilt === 'N' ? -1 : 1); this._paintSheet(); return; }

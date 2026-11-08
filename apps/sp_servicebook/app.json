@@ -1,0 +1,25 @@
+{
+  "id": "sp_servicebook",
+  "title": "Service Book",
+  "description": "A log of every service and repair on the car: date, km from the odometer, type, notes, cost, workshop. Typed on the app's own touch keyboard. Test build (milestone 1).",
+  "version": "0.1.0",
+  "vendor": "sp",
+  "loggingId": "OASB",
+  "iconGlyph": "wrench",
+  "signals": {
+    "de.bmw.infotainment.KombiIF": {
+      "statusRangeTankStatus": "rs",
+      "_optional": "the odometer"
+    }
+  },
+  "screens": [
+    {
+      "name": "MAIN",
+      "kind": "canvas",
+      "title": "Service Book",
+      "buttons": [
+        ["BTN_ADD", "Add entry"]
+      ]
+    }
+  ]
+}
