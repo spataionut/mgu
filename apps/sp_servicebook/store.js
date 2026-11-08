@@ -186,6 +186,20 @@ class LogStore {
         this._commitCar((c) => { c.docs[kind] = c.docs[kind].filter((x) => x.id !== p.id).concat([p]); });
         return p;
     }
+    /** Add what importer.plan() found new, in one write (all or nothing). Returns the counts. */
+    applyImport(p) {
+        if (!p || !p.ok) throw new Error('the import has problems');
+        const prevE = this.entries, prevC = this.car;
+        const now = new Date().toISOString();
+        const stampIt = (x) => Object.assign({}, x, { created: now, updated: now });
+        this.entries = prevE.concat(p.entries.map((e) => clean(stampIt(e)))).sort(order);
+        const car = JSON.parse(JSON.stringify(prevC));
+        DOCS.forEach((d) => { car.docs[d[0]] = car.docs[d[0]].concat((p.docs[d[0]] || []).map((x) => cleanPeriod(stampIt(x)))); });
+        if (p.variant != null) car.variant = p.variant;
+        this.car = cleanCar(car);
+        try { this._write(); } catch (err) { this.entries = prevE; this.car = prevC; throw err; }
+        return p.counts;
+    }
     removeDoc(kind, id) {
         if (!this.car.docs[kind] || !this.car.docs[kind].some((p) => p.id === id)) return false;
         this._commitCar((c) => { c.docs[kind] = c.docs[kind].filter((x) => x.id !== id); });

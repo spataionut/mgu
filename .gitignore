@@ -24,6 +24,8 @@ provisioning/
 # Personal service log exports
 backups/
 servicebook-export*.json
+servicebook-import*.json
+private/
 
 # Third-party installer, downloaded separately from mgu-store
 mgu-install.js

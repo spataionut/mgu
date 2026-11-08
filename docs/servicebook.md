@@ -1,4 +1,4 @@
-# Service Book 0.3.0
+# Service Book 0.4.0
 
 `apps/sp_servicebook`. Milestone 1 (0.1.0) has:
 - a log list, newest first
@@ -19,7 +19,9 @@
 - Tap a feature and the drawn tachometer points at its submenu. Tap a value and it points at that value.
 - **Reference only.** The app sends nothing to the car: the catalog has no way for an app to press steering-wheel buttons or reach the DME (checked 2026-11-08).
 
-Next: import from a USB stick, then the Due and Stats screens.
+0.4.0 adds **USB import**, for history and documents typed on the Mac instead of in the car. See [Import from USB](#import-from-usb).
+
+Next: the Due and Stats screens.
 
 ## Files
 
@@ -29,6 +31,7 @@ Next: import from a USB stick, then the Due and Stats screens.
 | `main.js` | The pages: header with the **Service log**, **Car** and **Custom Code** tabs, odometer, **+ Add entry**, the rows. A row opens it for editing. Every handler is wrapped. |
 | `car.js` | The Car page: model (series → name table plus your variant), body, VIN, km, document tiles. |
 | `customcode.js` | The Custom Code page: the CCM table (`FEATURES`) and a drawn tachometer whose needle shows the picked submenu or value. |
+| `importer.js` | USB import: finds `servicebook-import.json` on the sticks under `/media`, checks every item, and works out what's new. Also a checker on the Mac: `node apps/sp_servicebook/importer.js <file>`. |
 | `docs.js` | Document status, and the period form: valid from/until (date pad, Today, length pills such as 12 months = from + 12 months − 1 day), insurer or station, policy/serial number, km for ITP, cost. Delete takes two taps. |
 | `dates.js` | Calendar maths on `YYYY-MM-DD`. |
 | `form.js` | The Add/Edit sheet: type pills, date (−/+/Today), km (number pad, or **Odometer**), notes, cost and workshop (keyboard), Save and Cancel. Delete takes two taps within 4 s. |
@@ -43,6 +46,28 @@ The kit's `display.js` has one small patch: a sheet with a `tilt(dir)` method ta
 - **Series and body:** `de.bmw.infrastructure.VehicleInformation.VehicleType`, instance 1. It has a notifier only, so it shows once the car sends it. Until then the page says "series not reported yet".
 - **VIN:** the app's `VIN` environment variable, which the OAP platform sets; BMW's SDK `getVin()` reads the same variable. It's shown on screen only: it's not written to the log file, the app's log or the repo. (`VehicleInformation.ChassisNumber` exists too, but it holds only 7 bytes.)
 - **Model name:** the car doesn't report one. The table in `car.js` maps the series to a name (G01 → X3), and you type the variant.
+
+## Import from USB
+
+Fill the log and the documents from a file made on the Mac.
+
+1. Write the file. [import-example.json](import-example.json) shows the format, with made-up values. Keep the real file in `private/` (git-ignored, as is any `servicebook-import*.json`), because it holds policy numbers and history.
+   - `type` is one of: Oil & filter, Brakes, Spark plugs, Tyres, Air/cabin filter, Fluids, Battery, Coding/Mods, Inspection, Other (case doesn't matter).
+   - Dates are `YYYY-MM-DD`. `km` is a number. `cost`, `workshop`, `notes`, `who` (insurer or ITP station) and `number` are free text.
+   - `docs` has a list each for `rca`, `casco`, `rovinieta` and `itp`; older periods can go in too. `variant` sets the model variant.
+2. Check it the way the car will:
+   ```bash
+   node apps/sp_servicebook/importer.js private/servicebook-import.json
+   ```
+3. Copy it to the **top** of the stick as `servicebook-import.json`, and plug the stick into the car.
+4. Service log → **USB import**. The card shows what's new; **Import** adds it.
+
+What it does and doesn't do:
+- It **only adds**. An entry already in the log (same date, type and km) or a period already there (same from and until) is skipped, so importing the same file twice is safe.
+- **All or nothing.** If any item has a problem, nothing is imported, and the card names the first problem; the checker on the Mac lists all of them.
+- One write, with the usual backup of the log taken first.
+- An imported ITP doesn't add an Inspection entry; put that in `entries` if you want it.
+- If no file is found, the card lists each folder under `/media` and what happened there (not found, or the error), which shows whether apps can read the stick at all.
 
 ## Controls
 
@@ -97,6 +122,7 @@ Install it from the Store's GitHub source once it's pushed to `main`: Store → 
 | 16 | **ITP** tile: add a period with km | The log gets an Inspection entry. |
 | 17 | Restart the head unit | The variant and all documents are still there. |
 | 18a | **Custom Code** tab | Four features with their needle positions. Tapping a value moves the drawn needle. Compare with MG's menu on the real tachometer once. |
+| 18b | **USB import** with the stick that has `servicebook-import.json` | The card shows the expected counts. Import adds them, and the Car tiles show the documents. A second Import says "Nothing new". |
 | 18 | Uninstall is **not** part of the test | An uninstall deletes the data folder. Use updates only. |
 
 **If something fails, send a photo of the screen.** The most likely failure is #4, if touch doesn't reach sheets in this layout. The fallback then is the controller (#9).

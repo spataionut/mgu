@@ -2,7 +2,8 @@
 /**
  * Service Book: the log list, Add / Edit with the app's own keyboard, the odometer (milestone 1);
  * the Car page: model, VIN, total km, RCA / CASCO / Rovinieta / ITP (0.2.0, car.js, docs.js);
- * the Custom Code page: a guide to MG Flasher's Custom Code menu, reference only (0.3.0, customcode.js).
+ * the Custom Code page: a guide to MG Flasher's Custom Code menu, reference only (0.3.0, customcode.js);
+ * USB import of history and documents from servicebook-import.json on a stick (0.4.0, importer.js).
  *
  * The page (1600 x 520, the kit runs the screen on mgu-render): the header, the odometer and an
  * "Add entry" button, then the entries newest first; a row opens it for editing. Add / Edit and
@@ -22,6 +23,8 @@ const { docSheet, KINDS, status } = require('./docs');
 const { drawCar, seriesOf, bodyText, vinOf } = require('./car');
 const { drawGuide, guideState } = require('./customcode');
 const { today, addDays } = require('./dates');
+const importer = require('./importer');
+const path = require('path');
 
 const W = 1600, H = 520;
 const KOMBI = 'de.bmw.infotainment.KombiIF';
@@ -85,6 +88,52 @@ mgu.run({
             if (!open(f)) show('Typing needs the GPU renderer (mgu-render)');
         });
         ui.onClick('BTN_ADD', safe('add', () => edit(null)));
+
+        /* ---------- import from a USB stick ---------- */
+        const startImport = safe('import', () => {
+            const f = importer.find();
+            let sh;
+            if (!f.files.length) {
+                sh = cardSheet({
+                    title: 'Import', heading: 'No import file found', color: '#ffb000',
+                    subtitle: 'Put ' + importer.NAME + ' at the top of the stick, plug it in, then Try again',
+                    note: f.tried.length ? f.tried.map((x) => path.basename(x.dir) + ': ' + x.result).join('   ·   ') : 'No USB stick found under /media',
+                    actions: [{ label: 'Try again', primary: true, run: () => { startImport(); return null; } }],
+                });
+            } else {
+                const file = f.files[0];
+                let p = null, error = '';
+                try { p = importer.plan(importer.read(file), store); } catch (e) { error = e.code ? e.code + ': ' + e.message : e.message; }
+                if (error || !p.ok) {
+                    log.warn('import: ' + (error || p.errors.join('; ')));
+                    sh = cardSheet({
+                        title: 'Import', heading: 'Import file has problems', color: '#ef2b2d',
+                        subtitle: error ? 'Could not read ' + importer.NAME + '. Nothing was imported.'
+                            : (p.errors.length === 1 ? '1 problem' : p.errors.length + ' problems, the first below') + '. Nothing was imported.',
+                        note: error || p.errors[0],
+                    });
+                } else if (p.empty) {
+                    sh = cardSheet({ title: 'Import', heading: 'Nothing new to import', subtitle: 'All ' + p.skipped + ' items are already in the log', color: '#3fbf6f' });
+                } else {
+                    sh = cardSheet({
+                        title: 'Import', heading: 'Import from USB', subtitle: path.basename(path.dirname(file)) + ' / ' + path.basename(file),
+                        rows: [['New entries', String(p.counts.entries)], ['Document periods', String(p.counts.periods)], ['Already in the log', String(p.skipped)], ['Model variant', p.variant || '--']],
+                        note: 'Only adds; nothing is replaced. The log is backed up first.',
+                        actions: [{
+                            label: 'Import', primary: true, run: () => {
+                                try {
+                                    const c = store.applyImport(p);
+                                    show('Imported ' + c.entries + (c.entries === 1 ? ' entry' : ' entries') + ' and ' + c.periods + ' document period' + (c.periods === 1 ? '' : 's'));
+                                } catch (e) { log.error('import', e); show('Import failed: ' + (e && e.message || e)); }
+                                return 'close';
+                            },
+                        }],
+                    });
+                }
+            }
+            sh.onClose = changed;
+            if (!open(sh)) show('Import needs the GPU renderer (mgu-render)');
+        });
         ctx.hideButton('BTN_ADD');
 
         /* ---------- the Car page ---------- */
@@ -180,6 +229,11 @@ mgu.run({
                 cv.roundRect(bx, by, 300, 56, 28, withAlpha(S, 0.9));
                 cv.text('+  Add entry', bx + 150, by + 37, 26, '#ffffff', { align: 'center', font: 'bold' });
                 cv.target(bx, by, 300, 56, safe('add', () => edit(null)), 'add', 28);
+                const ix = bx - 20 - 240;
+                cv.roundRect(ix, by, 240, 56, 28, withAlpha('#ffffff', 0.08));
+                cv.strokeRoundRect(ix, by, 240, 56, 28, 1.5, withAlpha('#ffffff', 0.25));
+                cv.text('USB import', ix + 120, by + 37, 24, t.text, { align: 'center', font: 'bold' });
+                cv.target(ix, by, 240, 56, startImport, 'import', 28);
             } else {
                 cv.text('Adding entries needs the GPU renderer (mgu-render)', W - 40, 110, 22, t.dim, { align: 'right' });
             }

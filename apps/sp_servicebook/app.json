@@ -1,8 +1,8 @@
 {
   "id": "sp_servicebook",
   "title": "Service Book",
-  "description": "A log of every service and repair on the car (date, km from the odometer, type, notes, cost, workshop), and the car's details: model, VIN, total km, and RCA, CASCO, Rovinieta and ITP with days left; and a guide to MG Flasher's Custom Code menu. Typed on the app's own touch keyboard.",
-  "version": "0.3.0",
+  "description": "A log of every service and repair on the car (date, km from the odometer, type, notes, cost, workshop), and the car's details: model, VIN, total km, and RCA, CASCO, Rovinieta and ITP with days left; and a guide to MG Flasher's Custom Code menu. Typed on the app's own touch keyboard, or imported from a USB stick.",
+  "version": "0.4.0",
   "vendor": "sp",
   "loggingId": "OASB",
   "iconGlyph": "wrench",

@@ -281,4 +281,45 @@ assert.strictEqual(DK.endFor('2026-01-15', ['7 days', 0, 7]), '2026-01-21');
     assert.deepStrictEqual([st.feature, st.value], [3, null]);
     assert.strictEqual(draw(false, 'guide-readonly').targets.length, 0);
 }
+/* ---------- USB import ---------- */
+{
+    const I = require(path.join(js, 'importer'));
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sb-usb-'));
+    fs.mkdirSync(path.join(root, 'proc')); fs.mkdirSync(path.join(root, 'media'));
+    fs.mkdirSync(path.join(root, 'media/C1C6-1DF2')); fs.mkdirSync(path.join(root, 'media/OTHER'));
+    fs.writeFileSync(path.join(root, 'proc/mounts'), 'proc /proc proc rw 0 0\n/dev/sda1 /media/C1C6-1DF2 vfat ro 0 0\n');
+    assert.deepStrictEqual(I.find(root).files, []);
+    const example = JSON.parse(fs.readFileSync(path.join(root, '..', path.basename(root), '..') && path.join(__dirname, '../docs/import-example.json'), 'utf8'));
+    // FAT may report the name in capitals
+    fs.writeFileSync(path.join(root, 'media/C1C6-1DF2/SERVICEBOOK-IMPORT.JSON'), '\ufeff' + JSON.stringify(example));
+    const f = I.find(root);
+    assert.strictEqual(f.files.length, 1);
+    assert.deepStrictEqual(f.tried.map((x) => x.result.split(' ')[0]), ['found', 'no']);
+
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sb-imp-'));
+    const st = new LogStore(dir); st.load();
+    st.save({ date: '2026-11-08', km: 27083, type: 'Spark plugs', workshop: 'MV' });     // already in the log
+    const p = I.plan(I.read(f.files[0]), st);
+    assert.ok(p.ok, p.errors.join('; '));
+    assert.deepStrictEqual([p.counts.entries, p.counts.periods, p.skipped, p.variant], [1, 4, 1, 'M40i']);
+    const backups = fs.readdirSync(path.join(dir, 'backups')).length;
+    assert.deepStrictEqual(st.applyImport(p), { entries: 1, periods: 4 });
+    assert.strictEqual(fs.readdirSync(path.join(dir, 'backups')).length, backups + 1, 'one write, one backup');
+    const st2 = new LogStore(dir); st2.load();
+    assert.strictEqual(st2.entries.length, 2); assert.strictEqual(st2.car.variant, 'M40i');
+    assert.strictEqual(st2.current('itp').km, 19800); assert.strictEqual(st2.current('rca').until, '2027-07-02');
+    // the same file again: nothing new
+    const again = I.plan(I.read(f.files[0]), st2);
+    assert.ok(again.ok && again.empty); assert.strictEqual(again.skipped, 6);
+    // problems: nothing is imported, every problem is named
+    const bad = I.plan({ servicebookImport: 1, entries: [{ date: '2025-13-45', type: 'Oil & filter' }, { date: '2025-01-01', type: 'oil' }, { date: '2025-01-01', type: 'brakes', km: -5 }],
+        docs: { rca: [{ from: '2026-02-01', until: '2026-01-01' }], vignette: [] } }, st2);
+    assert.ok(!bad.ok);
+    assert.strictEqual(bad.errors.length, 5, bad.errors.join('\n'));
+    assert.ok(/entry 2 .*unknown type "oil"/.test(bad.errors.join()), 'type typo named');
+    assert.throws(() => st2.applyImport(bad));
+    assert.ok(!I.plan({ hello: 1 }, st2).ok);
+    // type names are matched without case
+    assert.strictEqual(I.plan({ servicebookImport: 1, entries: [{ date: '2024-01-01', type: 'air/cabin FILTER' }] }, st2).entries[0].type, 'Air/cabin filter');
+}
 console.log('servicebook: ok');

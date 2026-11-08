@@ -1,0 +1,14 @@
+{
+  "servicebookImport": 1,
+  "variant": "M40i",
+  "entries": [
+    { "date": "2025-04-12", "km": 18500, "type": "Oil & filter", "cost": "1200 lei", "workshop": "Example Service", "notes": "Castrol 0W-30, filter" },
+    { "date": "2026-11-08", "km": 27083, "type": "Spark plugs", "cost": "", "workshop": "MV", "notes": "" }
+  ],
+  "docs": {
+    "rca": [ { "from": "2026-07-03", "until": "2027-07-02", "who": "Example Insurer", "number": "RO-0000000", "cost": "900 lei" } ],
+    "casco": [ { "from": "2026-03-01", "until": "2027-02-28", "who": "Example Insurer", "number": "CASCO-0000", "cost": "4000 lei" } ],
+    "rovinieta": [ { "from": "2026-01-10", "until": "2027-01-09", "number": "0000000000", "cost": "28 EUR" } ],
+    "itp": [ { "from": "2025-05-20", "until": "2027-05-19", "who": "Example ITP Station", "km": 19800, "cost": "200 lei" } ]
+  }
+}
