@@ -13,6 +13,7 @@ const CLIENT = 'test-client';
 const TOKEN = 'ghu_faketoken';
 const REPO = '/repos/spataionut/mgu-dumps';
 let polls = 0;
+const failed = {};   // the first upload of part 002 fails, to test the retry
 
 const log = (o) => fs.appendFileSync(path.join(out, 'requests.log'), JSON.stringify(o) + '\n');
 const send = (res, code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)); };
@@ -42,9 +43,12 @@ http.createServer((req, res) => {
             if (!/^dump-/.test(j.tag_name)) return send(res, 422, { message: 'bad tag' });
             return send(res, 201, { id: 7, tag_name: j.tag_name });
         }
+        if (req.method === 'GET' && req.url.indexOf(REPO + '/releases/7/assets') === 0) return send(res, 200, []);
+        if (req.method === 'DELETE' && req.url.indexOf(REPO + '/releases/assets/') === 0) return send(res, 204, {});
         const m = /^\/repos\/spataionut\/mgu-dumps\/releases\/7\/assets\?name=([\w.-]+)$/.exec(req.url);
         if (req.method === 'POST' && m) {
             if (body.length !== entry.contentLength) return send(res, 400, { message: 'length mismatch' });
+            if (/\.002$/.test(m[1]) && !failed[m[1]]) { failed[m[1]] = true; return send(res, 502, { message: 'Bad Gateway' }); }
             fs.writeFileSync(path.join(out, m[1]), body);
             return send(res, 201, { id: 1, name: m[1], size: body.length });
         }

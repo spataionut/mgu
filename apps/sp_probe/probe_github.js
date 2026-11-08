@@ -157,4 +157,14 @@ async function uploadAsset(gh, token, releaseId, name, contentType, body) {
     }
 }
 
-module.exports = { makeLookup, request, deviceLogin, createRelease, uploadAsset };
+/** Removes an asset of that name, if any (a broken upload can leave one behind). */
+async function deleteAsset(gh, token, releaseId, name) {
+    const r = await request(gh.lookup, 'GET', gh.api + '/repos/' + gh.repo + '/releases/' + releaseId + '/assets?per_page=100',
+        apiHeaders(token), null);
+    const hit = r.status === 200 && Array.isArray(r.json) ? r.json.filter((a) => a && a.name === name)[0] : null;
+    if (!hit) return false;
+    await request(gh.lookup, 'DELETE', gh.api + '/repos/' + gh.repo + '/releases/assets/' + hit.id, apiHeaders(token), null);
+    return true;
+}
+
+module.exports = { makeLookup, request, deviceLogin, createRelease, uploadAsset, deleteAsset };

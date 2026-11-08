@@ -1,20 +1,20 @@
 'use strict';
 /**
- * SB Probe: a one-off helper for Service Book development, for a car without SSH.
+ * SB Probe: a one-off helper for Service Book (and later apps) development, for a car without SSH.
  *
  * - Shows the odometer (KombiIF.statusRangeTankStatus.mileageKilometre).
  * - "Upload to GitHub": device sign-in on the phone, then a release in the private
- *   spataionut/mgu-dumps with report.txt and dump.tar (probe_github.js).
- * - "Send files to Mac" (fallback): finds tools/receive-dump.py on the uplink's subnet (the phone hotspot the
- *   car joined through mgu-uplink) and uploads report-<time>.txt and dump-<time>.tar to it.
+ *   spataionut/mgu-dumps with report.txt and dump.tar.gz.001, .002, ... (gzip members of one tar;
+ *   `cat dump.tar.gz.* | tar xz` puts them back together). probe_github.js.
+ * - "Send files to Mac" (fallback): finds tools/receive-dump.py on the uplink's subnet and uploads
+ *   report-<time>.txt and dump-<time>.tar to it.
+ *
+ * What goes in the dump: probe_collect.js (platform, every app's source, /etc/oap, identity files,
+ * a filesystem index; never apps' data folders or key material).
  *
  * Why push and not USB or a server (seen on the car, 0.1.0): USB sticks are read-only for apps
  * (EROFS), and the unit's firewall drops every incoming connection an app could listen for.
  * mgu-uplink lets apps with "mguInternet" connect out through the uplink, so the probe connects out.
- *
- * The dump holds the SOME/IP catalog, one BMW app bundle and RHMI layout files. It never reads
- * apps' data folders. The report says what this app's user may read and write, and where BMW's
- * javascript on the unit mentions a speller or the RHMI component table.
  *
  * Node 8: no optional chaining, no optional catch binding, no fs.promises.
  */
@@ -22,117 +22,31 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const http = require('http');
-const util = require('util');
+const zlib = require('zlib');
 const mgu = require('./kit/mgu');
 const { TarWriter } = require('./probe_tar');
 const github = require('./probe_github');
+const C = require('./probe_collect');
 
-const readFile = util.promisify(fs.readFile);
-const readdir = util.promisify(fs.readdir);
-const lstat = util.promisify(fs.lstat);
-const tick = () => new Promise((r) => setImmediate(r));
+const errCode = C.errCode;
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// Test-only overrides: a fake unit tree and receiver port on a PC (test/probe_e2e.test.js). Unset on the car.
+// Test-only overrides: a fake unit tree, receiver port, part size and GitHub. Unset on the car.
 const ROOT = process.env.SP_PROBE_ROOT || '';
 const PORT = Number(process.env.SP_PROBE_PORT) || 8737;
+const PART_RAW = Math.max(0.01, Number(process.env.SP_PROBE_PART_MB) || 16) * 1024 * 1024;
 const HELLO = 'sp-probe-receiver 1';
 const HELLO_MS = 1500;
 const SCAN_PARALLEL = 32;
 const MAX_HOSTS = 1022;          // up to a /22; bigger subnets are only tried at the router and ARP neighbours
 const IDLE_MS = 60 * 1000;
 // GitHub upload: the client id of the owner's own GitHub App (public, not a secret), installed only
-// on the private repo below. Test-only overrides point it at a fake GitHub.
+// on the private repo below.
 const GH_CLIENT_ID = process.env.SP_PROBE_GH_CLIENT || 'Iv23liqYfRZ1xiIC5PIm';   // GitHub App sp-probe-upload
 const GH_REPO = 'spataionut/mgu-dumps';
 const GH_BASE = process.env.SP_PROBE_GH_BASE || '';
-const MAX_FILE = 64 * 1024 * 1024;
-const OAP = ROOT + '/var/opt/public/oap';
-const MAINAPP = ROOT + '/usr/lib/oap-mainapp';
-const FIXED = [
-    ROOT + '/etc/oap/someip/someip-interfaces.json',
-    OAP + '/oap_12204/source/javascript/app.js',
-    OAP + '/oap_12204/source/package.json',
-];
-const RHMI_NAMES = { 'application.xml': 1, 'uiDescription.json': 1, 'application.json': 1 };
-const GREP = [
-    { term: /speller/ig, max: 40, ctx: 240 },
-    { term: /editRoll/g, max: 10, ctx: 240 },
-    { term: /dropDownMenu/g, max: 4, ctx: 700 },     // finds the RHMI component type table
-    { term: /['"]input['"]/g, max: 15, ctx: 200 },
-];
 
 const state = { odo: null, odoRaw: null, odoError: null, busy: false };
-
-function errCode(e) { return (e && (e.code || e.message)) || String(e); }
-
-/** Walk dir, calling visit(file) for regular files; never follows symlinks. */
-async function walk(dir, depth, visit, skip) {
-    if (depth < 0) return;
-    let names;
-    try { names = await readdir(dir); } catch (e) { return; }
-    for (const n of names) {
-        const p = path.join(dir, n);
-        if (skip && skip(p, n)) continue;
-        let st;
-        try { st = await lstat(p); } catch (e) { continue; }
-        if (st.isDirectory()) await walk(p, depth - 1, visit, skip);
-        else if (st.isFile()) await visit(p, st);
-    }
-}
-
-/** Under /var/opt/public/oap/oap_<uid>/ only source/ and rhmiData*: never an app's data. */
-function skipAppData(p, n) {
-    const rel = path.relative(OAP, p).split(path.sep);
-    return rel.length === 2 && !(n === 'source' || n.indexOf('rhmiData') === 0);
-}
-
-async function collectFiles() {
-    const files = FIXED.slice();
-    const pick = (p) => { if (RHMI_NAMES[path.basename(p)] && p.indexOf('rhmiData') >= 0) files.push(p); };
-    await walk(MAINAPP, 8, pick);
-    await walk(OAP, 8, pick, skipAppData);
-    return files.filter((p, i) => files.indexOf(p) === i);
-}
-
-async function jsFiles() {
-    const out = [];
-    const pickJs = (p, st) => { if (/\.js$/.test(p) && st.size < MAX_FILE) out.push(p); };
-    await walk(MAINAPP, 6, pickJs);
-    let apps = [];
-    try { apps = await readdir(OAP); } catch (e) { /* none */ }
-    for (const a of apps) await walk(path.join(OAP, a, 'source', 'javascript'), 0, pickJs);
-    return out.slice(0, 400);
-}
-
-async function grepReport(lines) {
-    const files = await jsFiles();
-    lines.push('', '== javascript search (' + files.length + ' files)');
-    for (const f of files) {
-        let s;
-        try { s = (await readFile(f)).toString('latin1'); } catch (e) { lines.push('unreadable ' + f + ': ' + errCode(e)); continue; }
-        for (const g of GREP) {
-            g.term.lastIndex = 0;
-            let m, n = 0;
-            while ((m = g.term.exec(s)) && n < g.max) {
-                n++;
-                const a = Math.max(0, m.index - g.ctx / 2), b = Math.min(s.length, m.index + g.ctx / 2);
-                lines.push('[' + g.term.source + '] ' + f + ' @' + m.index + ': ' + s.slice(a, b).replace(/\s+/g, ' '));
-            }
-        }
-        await tick();
-    }
-}
-
-async function canWrite(dir) {
-    const p = path.join(dir, '.sp_probe_write_test');
-    try {
-        fs.writeFileSync(p, 'x');
-        fs.unlinkSync(p);
-        return 'yes';
-    } catch (e) {
-        return 'no (' + errCode(e) + ')';
-    }
-}
 
 function usbMounts() {
     try {
@@ -154,47 +68,15 @@ function addresses() {
     return out;
 }
 
-async function report(ctx, files) {
-    const lines = ['SB Probe report ' + new Date().toISOString(), ''];
-    const id = () => { try { return process.getuid() + '/' + process.getgid() + ' groups ' + process.getgroups().join(','); } catch (e) { return errCode(e); } };
-    lines.push('uid/gid: ' + id());
-    lines.push('dataDir: ' + ctx.dataDir);
-    lines.push('app dir: ' + __dirname);
-    lines.push('node: ' + process.version);
-    lines.push('addresses: ' + addresses().join(', '));
-    lines.push('uplink lease: ' + JSON.stringify(readLease(ctx)));
-    lines.push('odometer: ' + (state.odo !== null ? state.odo + ' km' : 'none') + (state.odoError ? ' (error: ' + state.odoError + ')' : ''));
-    lines.push('odometer raw struct: ' + JSON.stringify(state.odoRaw));
-    lines.push('', '== mounts under /media');
-    usbMounts().forEach((m) => lines.push(m.dir + ' ' + m.type + ' ' + m.opts));
-    lines.push('', '== write tests');
-    const dirs = [ctx.dataDir, path.dirname(ctx.dataDir || '/'), OAP, '/var/opt/public', '/tmp', '/var/tmp', os.homedir()]
-        .concat(usbMounts().map((m) => m.dir));
-    for (const d of dirs) lines.push(d + ': ' + await canWrite(d));
-    lines.push('', '== files (' + files.length + ')');
-    for (const f of files) {
-        try { lines.push('ok   ' + fs.statSync(f).size + ' ' + f); } catch (e) { lines.push('FAIL ' + errCode(e) + ' ' + f); }
+function canWrite(dir) {
+    const p = path.join(dir, '.sp_probe_write_test');
+    try {
+        fs.writeFileSync(p, 'x');
+        fs.unlinkSync(p);
+        return 'yes';
+    } catch (e) {
+        return 'no (' + errCode(e) + ')';
     }
-    await grepReport(lines);
-    return lines.join('\n') + '\n';
-}
-
-/** Writes the report and every readable file into the tar; returns { files, skipped }. */
-async function writeTar(tar, reportText, files) {
-    let skipped = 0;
-    await tar.add('sp_probe/report.txt', Buffer.from(reportText, 'utf8'));
-    for (const f of files) {
-        let data, st;
-        try {
-            st = fs.statSync(f);
-            if (st.size > MAX_FILE) { skipped++; continue; }
-            data = await readFile(f);
-        } catch (e) { skipped++; continue; }
-        if (!(await tar.add(f.slice(ROOT.length), data, st.mtime.getTime() / 1000))) skipped++;
-        await tick();
-    }
-    await tar.finish();
-    return { files: tar.files, skipped };
 }
 
 /** mgu-uplink's lease: {interface, ip, prefix, router, dns[]}, present only while online. */
@@ -210,6 +92,50 @@ function readLease(ctx) {
     }
     return null;
 }
+
+async function report(ctx, plan) {
+    const lines = ['SB Probe report ' + new Date().toISOString(), ''];
+    C.runtimeFacts().forEach((l) => lines.push(l));
+    lines.push('dataDir: ' + ctx.dataDir);
+    lines.push('app dir: ' + __dirname);
+    lines.push('addresses: ' + addresses().join(', '));
+    lines.push('uplink lease: ' + JSON.stringify(readLease(ctx)));
+    lines.push('odometer: ' + (state.odo !== null ? state.odo + ' km' : 'none') + (state.odoError ? ' (error: ' + state.odoError + ')' : ''));
+    lines.push('odometer raw struct: ' + JSON.stringify(state.odoRaw));
+    lines.push('', '== mounts under /media');
+    usbMounts().forEach((m) => lines.push(m.dir + ' ' + m.type + ' ' + m.opts));
+    lines.push('', '== write tests');
+    const oap = ROOT + '/var/opt/public/oap';
+    const dirs = [ctx.dataDir, path.dirname(ctx.dataDir || '/'), oap, '/var/opt/public', '/tmp', '/var/tmp', '/dev/shm', os.homedir()]
+        .concat(usbMounts().map((m) => m.dir));
+    for (const d of dirs) lines.push(d + ': ' + canWrite(d));
+    lines.push('', '== dump plan');
+    lines.push(plan.files.length + ' files, ' + Math.round(plan.total / 1048576) + ' MB; by tier (identity, text/code, media): ' + plan.tiers.join(', '));
+    lines.push(plan.skipped.length + ' skipped before reading (see sp_probe/skipped.txt in the dump)');
+    await C.grepReport(ROOT, lines);
+    return lines.join('\n') + '\n';
+}
+
+/** Collects everything for a dump: { plan, extras, text }. */
+async function prepare(ctx) {
+    ctx.ui.text('T_STATUS', 'Finding files...');
+    const plan = await C.collect(ROOT, (n) => ctx.ui.text('T_DETAIL', 'Seen ' + n + ' files'));
+    ctx.ui.text('T_STATUS', 'Indexing the filesystem...');
+    const index = await C.buildIndex(ROOT, (n) => ctx.ui.text('T_DETAIL', 'Indexed ' + n + ' entries'));
+    ctx.ui.text('T_STATUS', 'Writing the report...');
+    const text = await report(ctx, plan);
+    ctx.ui.text('T_DETAIL', plan.files.length + ' files, ' + Math.round(plan.total / 1048576) + ' MB before compression');
+    return {
+        plan: plan,
+        text: text,
+        extras: [
+            { name: 'sp_probe/report.txt', buf: Buffer.from(text, 'utf8') },
+            { name: 'sp_probe/fs-index.txt', buf: index },
+        ],
+    };
+}
+
+// ---------- Mac fallback: find tools/receive-dump.py on the uplink's subnet ----------
 
 function ipToInt(s) {
     const p = String(s || '').split('.').map(Number);
@@ -331,16 +257,45 @@ async function sendToMac(ctx) {
         ctx.ui.text('T_DETAIL', 'Uplink ' + lease.ip + '/' + lease.prefix + ': ' + why);
         return 'No receiver found on port ' + PORT + '. Is receive-dump.py running on a Mac on the same hotspot?';
     }
-    ctx.ui.text('T_STATUS', 'Found ' + r.found + ', collecting files...');
-    const files = await collectFiles();
-    const text = await report(ctx, files);
+    const d = await prepare(ctx);
     const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-    await upload(r.found, 'report-' + stamp + '.txt', (write) => write(Buffer.from(text, 'utf8')));
+    await upload(r.found, 'report-' + stamp + '.txt', (write) => write(Buffer.from(d.text, 'utf8')));
     ctx.ui.text('T_STATUS', 'Sending files to ' + r.found + '...');
     let sent = null;
-    await upload(r.found, 'dump-' + stamp + '.tar', (write) => writeTar(new TarWriter(write), text, files).then((x) => { sent = x; }));
+    await upload(r.found, 'dump-' + stamp + '.tar', (write) => C.writeTar(new TarWriter(write), d.extras, d.plan, ROOT,
+        (i, n) => ctx.ui.text('T_DETAIL', 'Sent ' + i + ' of ' + n + ' files')).then((x) => { sent = x; }));
     ctx.ui.text('T_DETAIL', 'Done. You can uninstall SB Probe now.');
-    return 'Sent ' + sent.files + ' files to ' + r.found + (sent.skipped ? ', ' + sent.skipped + ' unreadable' : '');
+    return 'Sent ' + sent.files + ' files to ' + r.found + ', ' + sent.skipped.length + ' skipped';
+}
+
+// ---------- GitHub upload ----------
+
+function gzip(buf) {
+    return new Promise((ok, no) => zlib.gzip(buf, { level: 6 }, (e, r) => (e ? no(e) : ok(r))));
+}
+
+/**
+ * Collects the tar stream into parts of about PART_RAW bytes; each part is gzipped on the thread
+ * pool and handed to send(n, gz). The parts are gzip members of one tar stream.
+ */
+class Parts {
+    constructor(send) { this.send = send; this.chunks = []; this.size = 0; this.n = 0; this.raw = 0; this.gz = 0; }
+    write(b) {
+        this.chunks.push(b);
+        this.size += b.length;
+        return this.size >= PART_RAW ? this.flush() : Promise.resolve();
+    }
+    async flush() {
+        if (!this.size) return;
+        const raw = Buffer.concat(this.chunks, this.size);
+        this.chunks = [];
+        this.size = 0;
+        const gz = await gzip(raw);
+        this.n++;
+        this.raw += raw.length;
+        this.gz += gz.length;
+        await this.send(this.n, gz);
+    }
 }
 
 async function uploadToGitHub(ctx) {
@@ -361,23 +316,33 @@ async function uploadToGitHub(ctx) {
         ctx.ui.text('T_DETAIL', 'Code valid ' + Math.round(expires / 60) + ' min. Waiting for you to approve...');
     });
     try {
-        ctx.ui.text('T_STATUS', 'Signed in. Collecting files...');
-        ctx.ui.text('T_DETAIL', ' ');
-        const files = await collectFiles();
-        const text = await report(ctx, files);
-        let size = 0;
-        await writeTar(new TarWriter((b) => { size += b.length; return Promise.resolve(); }), text, files);
+        const d = await prepare(ctx);
         const tag = 'dump-' + new Date().toISOString().replace(/[:.]/g, '-');
-        const release = await github.createRelease(gh, token, tag, 'Uploaded by SB Probe from the head unit.');
-        await github.uploadAsset(gh, token, release, 'report.txt', 'text/plain', Buffer.from(text, 'utf8'));
-        ctx.ui.text('T_STATUS', 'Uploading ' + Math.round(size / 1048576) + ' MB to GitHub...');
-        let sent = null;
-        await github.uploadAsset(gh, token, release, 'dump.tar', 'application/x-tar', {
-            length: size,
-            produce: (write) => writeTar(new TarWriter(write), text, files).then((x) => { sent = x; }),
+        const release = await github.createRelease(gh, token, tag,
+            'Uploaded by SB Probe from the head unit. Put back together with: cat dump.tar.gz.* | tar xzf -');
+        await github.uploadAsset(gh, token, release, 'report.txt', 'text/plain', Buffer.from(d.text, 'utf8'));
+        let done = 0;
+        const parts = new Parts(async (n, gz) => {
+            const name = 'dump.tar.gz.' + ('00' + n).slice(-3);
+            for (let attempt = 1; ; attempt++) {
+                ctx.ui.text('T_STATUS', 'Uploading part ' + n + (attempt > 1 ? ' (try ' + attempt + ')' : '') + ', ' + Math.round(done / 1048576) + ' MB sent...');
+                try {
+                    await github.uploadAsset(gh, token, release, name, 'application/gzip', gz);
+                    break;
+                } catch (e) {
+                    if (attempt >= 4) throw e;
+                    ctx.log.warn('part ' + n + ' try ' + attempt + ': ' + errCode(e));
+                    await github.deleteAsset(gh, token, release, name).catch(() => null);
+                    await sleep(attempt * 3000);
+                }
+            }
+            done += gz.length;
         });
-        ctx.ui.text('T_DETAIL', 'Done. You can uninstall SB Probe now.');
-        return 'Uploaded ' + sent.files + ' files to GitHub, release ' + tag;
+        const r = await C.writeTar(new TarWriter((b) => parts.write(b)), d.extras, d.plan, ROOT,
+            (i, n) => ctx.ui.text('T_DETAIL', 'Packed ' + i + ' of ' + n + ' files'));
+        await parts.flush();
+        ctx.ui.text('T_DETAIL', 'Done. ' + r.skipped.length + ' skipped. You can uninstall SB Probe now.');
+        return 'Uploaded ' + r.files + ' files in ' + parts.n + ' parts (' + Math.round(parts.gz / 1048576) + ' MB) to release ' + tag;
     } finally {
         token = null;
     }

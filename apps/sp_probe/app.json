@@ -1,8 +1,8 @@
 {
   "id": "sp_probe",
   "title": "SB Probe",
-  "description": "One-off helper for Service Book development. Uploads the SOME/IP catalog, one BMW app bundle and the RHMI layout files to the owner's private GitHub repo (or to a Mac on the same phone hotspot), and shows the odometer. Remove it when done.",
-  "version": "0.3.0",
+  "description": "One-off helper for Service Book and later apps. Uploads a reference dump of the head unit (OAP platform, every app's source, the SOME/IP catalog, system identity, a filesystem index; never app data or keys) to the owner's private GitHub repo or a Mac on the same hotspot, and shows the odometer. Remove it when done.",
+  "version": "0.4.0",
   "vendor": "sp",
   "loggingId": "OASP",
   "iconGlyph": "SBP",

@@ -1,13 +1,38 @@
 # SB Probe: getting the reference files without SSH
 
-`apps/sp_probe` is a throwaway app. It uploads these to the private repo `spataionut/mgu-dumps` on GitHub, or, as a fallback, sends them to a Mac:
+`apps/sp_probe` is a throwaway app. It takes a reference dump of the head unit, enough to build other apps later without going back to the car. It uploads the dump to the private repo `spataionut/mgu-dumps` on GitHub, or, as a fallback, sends it to a Mac.
 
-- the SOME/IP catalog
-- one BMW app bundle (it contains the SDK)
-- every RHMI layout file on the unit
-- a report
+## What's in the dump (0.4.0, `apps/sp_probe/probe_collect.js`)
 
-The report covers which user the app runs as, where it can write, the odometer signal, the uplink, and where BMW's javascript mentions a speller or the RHMI component table. The probe never reads apps' data folders.
+The files go in this order, up to 1 GB before compression. Each file can be at most 48 MB.
+
+1. **Identity:**
+   - the SOME/IP catalog (`/etc/oap/someip/someip-interfaces.json`)
+   - the OS and firmware version files in `/etc`
+   - kernel, CPU and memory (`/proc/version`, `cpuinfo`, `meminfo`), mounts and the boot command line
+   - `/etc/passwd` and `/etc/group` (users only; `shadow` is never read)
+   - the OAP app → uid map
+   - the systemd units of the app platform
+2. **Text and code:**
+   - all of `/etc/oap`
+   - the whole OAP platform, `/usr/lib/oap-mainapp`: its JavaScript, configs, RHMI widgets and bundled modules
+   - every installed app's `source/` and `rhmiData*`, BMW's and third-party, which hold the SDK in several versions
+3. **Media** from the same trees: images, fonts and sounds.
+
+It also writes these files:
+
+| File | Contents |
+|---|---|
+| `sp_probe/report.txt` | Which user the probe runs as, Node's versions and build config, environment variable names (no values), addresses, the uplink, write tests (data folder, `/tmp`, `/var/tmp`, `/dev/shm`, home, sticks), the raw odometer struct, and where the platform's JavaScript mentions a speller, `editRoll`, the RHMI component table, `input` and `CorruptAppsHandler`. |
+| `sp_probe/fs-index.txt` | Every file and folder on the unit, with mode, owner, size and symlink target, but no contents. It leaves out `/proc`, `/sys`, `/dev`, `/media`, `/mnt` and apps' data folders. It shows where everything is, for a later probe that needs more. |
+| `sp_probe/skipped.txt` | Each file left out, and why. |
+
+**Never in the dump:**
+- any app's `data/` folder (yours or BMW's)
+- USB sticks
+- files that look like keys, certificates or provisioning, by name (`*.key`, `*.pem`, `*.p12`, `*.crt`, "private", "secret", "provision", …) or because they contain a private-key block. These appear in `skipped.txt` by name only.
+
+**Not in the dump: live signal values.** The catalog says which signals exist. Which ones carry data on this car would need a separate probe that subscribes to them, and the installer rejects a manifest field the firmware has no getter for. That probe can be generated from the catalog once it's here.
 
 ## Why it sends over the phone hotspot
 
@@ -18,7 +43,7 @@ Version 0.1.0 showed on the car that neither of the easy routes works:
 
 So from 0.2.0 the probe connects out. It declares `mguInternet`, so mgu-uplink routes it through the phone hotspot the car joined.
 
-## Upload to GitHub (0.3.0, no laptop needed)
+## Upload to GitHub (no laptop needed)
 
 ### One-time setup at home
 
@@ -46,10 +71,10 @@ Done on 2026-11-08: the App is `sp-probe-upload`, and its Client ID `Iv23liqYfRZ
 ### In the car
 
 1. **Online:** the car joins the phone hotspot in Store → Settings → **Wi-Fi**, and the Store shows `Online`.
-2. **Update:** Store → **Check now** → update **SB Probe** to **0.3.0**. The Store may say it uses the internet; that's for the upload.
+2. **Update:** Store → **Check now** → update **SB Probe** to **0.4.0**. The Store may say it uses the internet; that's for the upload.
 3. **Upload:** open SB Probe and tap **Upload to GitHub**. The screen shows `On your phone open github.com/login/device and enter ABCD-1234`.
 4. **Approve:** on the phone, open that page, enter the code and authorize the App.
-5. **Wait:** the probe creates a release `dump-<time>` in `mgu-dumps` with `report.txt` and `dump.tar`. It then says `Uploaded N files to GitHub`.
+5. **Wait:** the probe finds and indexes the files, then creates a release `dump-<time>` in `mgu-dumps`. It uploads `report.txt` and the dump as `dump.tar.gz.001`, `.002`, … (about 16 MB of files per part before compression). A part that fails is retried up to 4 times. At the end it says `Uploaded N files in K parts`. Keep the ignition on and the phone nearby until then; if it stops halfway, tap Upload again, which makes a new release.
 6. **Clean up:** uninstall **SB Probe**.
 
 The token exists only in the probe's memory for that one upload. It can write only to `mgu-dumps`, because that's the only repo the App is installed on, and it expires after 8 hours. The App can be uninstalled at any time from GitHub → Settings → Applications.
@@ -77,7 +102,7 @@ You need the phone, the Mac and this repo on the Mac.
    python3 tools/receive-dump.py
    ```
    If macOS asks whether Python may accept incoming connections, allow it.
-3. **Update the probe:** update **SB Probe** to 0.3.0, as above.
+3. **Update the probe:** update **SB Probe** to 0.4.0, as above.
 4. **Send:** open SB Probe and tap **Send files to Mac (phone hotspot)**. The terminal prints `Probe found this Mac from …`, then `Received …dump-….tar`. The car says `Sent N files to <Mac address>`.
 5. **Clean up:** uninstall **SB Probe** in the Store.
 
@@ -99,7 +124,7 @@ From GitHub, Claude fetches the newest release:
 
 ```bash
 tag=$(gh release list -R spataionut/mgu-dumps -L 1 --json tagName -q '.[0].tagName')
-mkdir -p unit-dump && gh release download "$tag" -R spataionut/mgu-dumps -D unit-dump/_dl && tar xf unit-dump/_dl/dump.tar -C unit-dump
+mkdir -p unit-dump && gh release download "$tag" -R spataionut/mgu-dumps -D unit-dump/_dl && cat unit-dump/_dl/dump.tar.gz.* | tar xzf - -C unit-dump
 ```
 
 From the Mac fallback, run this instead:
