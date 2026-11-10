@@ -1,8 +1,8 @@
 {
   "id": "sp_servicebook",
   "title": "Service Book",
-  "description": "A log of every service and repair on the car (date, km from the odometer, type, notes, cost, workshop), and the car's details: model, VIN, total km, and RCA, CASCO, Rovinieta and ITP with days left; and a guide to MG Flasher's Custom Code menu. Typed on the app's own touch keyboard, or imported from a USB stick.",
-  "version": "0.4.0",
+  "description": "A log of every service and repair on the car (date, km from the odometer, type, notes, cost, workshop), and the car's details: model, VIN, total km, and RCA, CASCO, Rovinieta and ITP with days left. A Custom Code page shows MG Flasher's settings (map, Max Cooling, exhaust flap, valet) read from the DME, and sets them over the car's own diagnostic link: tapped twice, only stopped with the engine running, each confirmed by reading it back. Typed on the app's own touch keyboard, or imported from a USB stick.",
+  "version": "0.5.0",
   "vendor": "sp",
   "loggingId": "OASB",
   "iconGlyph": "wrench",
@@ -13,7 +13,27 @@
     },
     "de.bmw.infrastructure.VehicleInformation": {
       "VehicleType": "s",
-      "_optional": "series and body type on the Car page"
+      "_optional": "series and body type on the Car page; the selector for Custom Code",
+      "statusGearboxDrive": "s",
+      "DataPowerTrain2": "s"
+    },
+    "de.bmw.infotainment.vehicle.Vehicle2": {
+      "statusCarSpeed2": "rs",
+      "_optional": "setting Custom Code (needs the car's speed)"
+    },
+    "de.bmw.infotainment.vehicle.CDS": {
+      "statusEngineSpeed2": "rs",
+      "_optional": "setting Custom Code (needs the engine speed)"
+    },
+    "com.harman.infotainment.systemfunctions.tasu.tasu.InternalTasu": {
+      "_instances": "SystemFunctionsInternalTasuInst1",
+      "_methods": [
+        "sendTasuRequest"
+      ],
+      "_broadcasts": [
+        "sendTasuResponse"
+      ],
+      "_optional": "Custom Code's live settings (the DME link)"
     }
   },
   "screens": [

@@ -1,4 +1,4 @@
-# Service Book 0.4.0
+# Service Book 0.5.0
 
 `apps/sp_servicebook`. Milestone 1 (0.1.0) has:
 - a log list, newest first
@@ -17,9 +17,11 @@
 - In the CCM, the cruise-control buttons move through the menu, and the tachometer needle shows the submenu (feature) and then the value.
 - The tab lists the features in use, with their needle positions: **Switchable Maps** (1K: this car's maps, 100 RON max power 0K, 95 RON max power 1K, stock 2K), **Max Cooling** (3K: Disable 0K, Enable 1K), **Exhaust Flap** (6K: Automatic 0K, Closed 1K, Opened 2K), **Valet Mode** (7K: Disable 0K, Enable 1K). 0K (READY) is Exit. Burbles, Antilag RPM and Ethanol Content Override are left out on purpose.
 - Tap a feature and the drawn tachometer points at its submenu. Tap a value and it points at that value.
-- **Reference only.** The app sends nothing to the car: the catalog has no way for an app to press steering-wheel buttons or reach the DME (checked 2026-11-08).
+- **Reference only.** The app sends nothing to the car. (Apps can reach the DME through the head unit's diagnostic link; MG Flasher's commands aren't known yet. See [research.md](research.md).)
 
 0.4.0 adds **USB import**, for history and documents typed on the Mac instead of in the car. See [Import from USB](#import-from-usb).
+
+0.5.0 makes **Custom Code** live: it reads MG Flasher's settings from the DME and sets them, with no ENET adapter. See [Custom Code live](#custom-code-live).
 
 Next: the Due and Stats screens.
 
@@ -30,7 +32,9 @@ Next: the Due and Stats screens.
 | `app.json` | id `sp_servicebook`, one `canvas` screen, `KombiIF.statusRangeTankStatus` (`rs`), `VehicleInformation.VehicleType` (`s`), no internet. Both flags pass `kit/tools/check_signals.py` against the car's catalog. |
 | `main.js` | The pages: header with the **Service log**, **Car** and **Custom Code** tabs, odometer, **+ Add entry**, the rows. A row opens it for editing. Every handler is wrapped. |
 | `car.js` | The Car page: model (series → name table plus your variant), body, VIN, km, document tiles. |
-| `customcode.js` | The Custom Code page: the CCM table (`FEATURES`) and a drawn tachometer whose needle shows the picked submenu or value. |
+| `customcode.js` | The Custom Code page: the CCM table (`FEATURES`) and a drawn tachometer whose needle shows the picked submenu or value. 0.5.0: a green dot on each setting's current value, the armed value outlined, and a status line. |
+| `mgf.js` | 0.5.0: MG Flasher's settings over the head unit's diagnostic link (`InternalTasu`, DME `0x12`). `check()` allows only the captured reads and each setting's own writes. Sets and confirms as the MG Flasher app does. |
+| `carstate.js` | 0.5.0: the write gate (live speed under 1 km/h, engine over 400 rpm, not in R/N/D), from signals no older than 3 s. |
 | `importer.js` | USB import: finds `servicebook-import.json` on the sticks under `/media`, checks every item, and works out what's new. Also a checker on the Mac: `node apps/sp_servicebook/importer.js <file>`. |
 | `docs.js` | Document status, and the period form: valid from/until (date pad, Today, length pills such as 12 months = from + 12 months − 1 day), insurer or station, policy/serial number, km for ITP, cost. Delete takes two taps. |
 | `dates.js` | Calendar maths on `YYYY-MM-DD`. |
@@ -69,6 +73,17 @@ What it does and doesn't do:
 - An imported ITP doesn't add an Inspection entry; put that in `entries` if you want it.
 - If no file is found, the card lists each folder under `/media` and what happened there (not found, or the error), which shows whether apps can read the stick at all.
 
+## Custom Code live
+
+How it works (the bytes and addresses are in `mgf.js`; the capture and head-unit tests are in [mgflasher-capture.md](mgflasher-capture.md)):
+- **When it talks to the DME:** nothing is sent until the Custom Code tab is opened. Then it reads the four settings and the last command id about every 5 s, only while that tab is on screen.
+- **Sanity check:** every value must be in range and the last id must end in `69`. Otherwise the page says the settings don't read as expected and stays info only: no write. MG Flasher keeps the settings at RAM addresses that may move after an MG Flasher update.
+- **Current value:** each setting's current value has a green dot.
+- **Setting a value:** tap a value to arm it ("Tap again to set"), and tap it again within 5 s to send. It only goes while the car is stopped (live speed), the engine runs, and the selector isn't in R/N/D. Otherwise the status line says why.
+- **Confirmation:** after the write, the last command id must read the setting's id and the setting must read the new value. Only then is it "confirmed by the DME". Otherwise the line says what it read.
+- **Signals added:** `InternalTasu` (`sendTasuRequest` / `sendTasuResponse`), `Vehicle2.statusCarSpeed2`, `CDS.statusEngineSpeed2`, and `VehicleInformation.statusGearboxDrive` / `DataPowerTrain2`. All are optional: a unit without them installs the app, and the page stays info only.
+- **Tests:** `node test/servicebook-mgf.test.js` checks the guard, the settings against a stubbed DME, a write that isn't taken, a build that reads wrong, no answer, and the page.
+
 ## Controls
 
 - **Touch:** tap keys, pills and fields. A key fires when the finger lifts, as everywhere in the kit.
@@ -102,6 +117,11 @@ node kit/tools/preview.js dist/sp_servicebook <outdir>
 
 Install it from the Store's GitHub source once it's pushed to `main`: Store → **Check now** → **Service Book** → Install. Nothing else on the unit changes.
 
+**An update that isn't pushed (0.5.0):** the Store updates an app only from the source that installed it, here `github:spataionut/mgu`. It refuses a loose `.tgz` on a stick ("Not installable": the id belongs to another source). Instead, put a **checkout** on the stick: `usb-repo` writes `mgu-copy.json` naming the checkout's GitHub remote, so the Store treats the folder as the same source and the unit builds from it. `usb-repo` copies git's tracked files only, so for uncommitted work, export the tracked and untracked (not ignored) files to a scratch folder, `git init` and `git add -A` there, set the same `origin` remote, then:
+```bash
+node mgu-install.js usb-repo /Volumes/MGU <export folder>
+```
+
 | # | Check | Pass when |
 |---|---|---|
 | 1 | Open Service Book | The header says SERVICE LOG, and the odometer shows the cluster's km within a minute. |
@@ -123,6 +143,7 @@ Install it from the Store's GitHub source once it's pushed to `main`: Store → 
 | 17 | Restart the head unit | The variant and all documents are still there. |
 | 18a | **Custom Code** tab | Four features with their needle positions. Tapping a value moves the drawn needle. Compare with MG's menu on the real tachometer once. |
 | 18b | **USB import** with the stick that has `servicebook-import.json` | The card shows the expected counts. Import adds them, and the Car tiles show the documents. A second Import says "Nothing new". |
+| 18c | 0.5.0 **Custom Code**, stopped with the engine running | Green dots match MG Flasher. Map → 100 RON, tapped twice, says confirmed. Do the same for Max Cooling, Flap and Valet, one at a time, and set each back. |
 | 18 | Uninstall is **not** part of the test | An uninstall deletes the data folder. Use updates only. |
 
 **If something fails, send a photo of the screen.** The most likely failure is #4, if touch doesn't reach sheets in this layout. The fallback then is the controller (#9).
@@ -133,3 +154,5 @@ Install it from the Store's GitHub source once it's pushed to `main`: Store → 
 - **18a:** the Custom Code tab draws the dial and the four features as designed.
 - **18b:** USB import read the file from the stick, so apps can read sticks. It added 6 entries and 4 document periods. The log shows 7 entries, and the Car tiles show RCA, CASCO, Rovinieta and ITP with days left.
 - Everything survived a head-unit restart.
+
+**0.5.0 on the car (2026-11-10):** passed (18c). Installed from a stick copy of the GitHub source. In Custom Code the green dots matched MG Flasher, and the map, Max Cooling, flap and valet were each set from the head unit and **confirmed by the DME**, then set back.

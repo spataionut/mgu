@@ -62,6 +62,19 @@ What is settled about the car's head unit, and what is still open. "Unit" means 
   - **Preview:** `kit/tools/preview.js` draws the software path, which has no touch. The keyboard sheet is tested by calling its `draw()` and targets directly, and its frames are rendered to PNG with `canvas.js`.
   - **Built:** Service Book 0.1.0 ([servicebook.md](servicebook.md)), with the car checklist there. The kit's fonts have no arrows (`← ↑ →` are baked as empty boxes; `✓ € …` are fine), so the keyboard draws those icons as shapes.
 
+## MG Flasher's Custom Code from the head unit (open, 2026-11-08)
+
+**Correction:** the 0.3.0 note said apps can't reach the DME. That was wrong. The catalog search looked at vehicle signals only and missed the diagnostic transport.
+- **The link:** `com.harman.infotainment.systemfunctions.tasu.tasu.InternalTasu` (instance `SystemFunctionsInternalTasuInst1`), method `sendTasuRequest`, broadcast `sendTasuResponse`. It is the head unit's own UDS transport, used by BMW's `ts_diagnostic_service`, so no ENET adapter is involved. The vendored kit already wraps it: `kit/runtime/diag.js` (any request) and `kit/runtime/readonly-diag.js` (reads only). The DME is address `0x12`.
+- **Proof it works on G cars:** upstream's `apps/live_adjustments` ("Engine Config" 0.8.1) sends DME and DSC commands through it from an app, and declares it in `app.json` as above.
+  - **Exhaust flap, BMW's own job (no tuner needed):** `2F 60FD 03 03E8` open, `2F 60FD 03 2328` close, `2F 60FD 00` back to the DME. Tested on MG1 cars. The DME drops a tester's command after about 20 s, so the app re-sends every 15 s.
+  - **Tuner commands:** BM3 and MHD only. MHD: `2F 01 <map-1>` switches the map, and `2F 03 01` / `2F 03 00` switches Max Cooling (engine running only). These were captured over ENET on an MHD car. `2F 01 02` made the check-engine light flash, which is MHD's map-change sign. **There are no MG Flasher commands.** The README asks owners to capture them.
+  - xDrive off (DSC `2E DB E1 00`) was measured on a **G01 X3 M40i** through the same link.
+- **Captured 2026-11-10** (`tools/mgf-capture.sh` with the iPhone on USB, then `tools/hsfz-parse.py`). MG Flasher's link to the adapter is plaintext HSFZ. Each feature is one UDS write to the DME in the default session, with no security access. The DME answers it with a non-standard negative reply, and MG Flasher confirms the change by reading the new state from RAM. All four features were seen, with the values the CCM table expects. The command bytes and addresses are in `apps/sp_servicebook/mgf.js`. The capture and full notes stay in git-ignored `private/`. The RAM addresses may change with an MG Flasher update.
+- **Head unit, 2026-11-10:** reads work (MGF Test 0.1.0), and so does a confirmed map write (0.2.1). Service Book 0.5.0 sets all four settings, each confirmed in the car ([mgflasher-capture.md](mgflasher-capture.md)).
+- *(Before the capture:)* - **What MG Flasher sends is unknown.** Its menu numbers (1 maps, 3 Max Cooling) look like MHD's `2F 01` and `2F 03`, but that is a guess. **No guessed command goes to the DME.**
+- **Next:** capture what the MG Flasher iPhone app sends over ENET when it changes each feature. Use `rvictl` on the Mac to mirror the iPhone's traffic, and look for UDS to `0x12` in the HSFZ frames (TCP 6801). It is plaintext unless MG Flasher encrypts its own link. Separately, a read-only `22 F1 50` to `0x12` names the DME variant (MG1 or MEVD17), which decides whether the BMW flap job applies. Steps and tools: [mgflasher-capture.md](mgflasher-capture.md), `tools/mgf-capture.sh` and `tools/hsfz-parse.py` (tested on made-up captures only).
+
 ## Data safety (mostly settled)
 
 - **Crash handling is not BMW's for Store apps.** mgu-store's app-privacy patch in MainApp checks `isLocalOnlyApp` (installed `package.json` has `"mguLocalOnly": true`, as the Store set for SB Probe).

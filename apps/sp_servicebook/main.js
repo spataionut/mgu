@@ -3,7 +3,10 @@
  * Service Book: the log list, Add / Edit with the app's own keyboard, the odometer (milestone 1);
  * the Car page: model, VIN, total km, RCA / CASCO / Rovinieta / ITP (0.2.0, car.js, docs.js);
  * the Custom Code page: a guide to MG Flasher's Custom Code menu, reference only (0.3.0, customcode.js);
- * USB import of history and documents from servicebook-import.json on a stick (0.4.0, importer.js).
+ * USB import of history and documents from servicebook-import.json on a stick (0.4.0, importer.js);
+ * the Custom Code page reads MG Flasher's settings from the DME and sets them, tapped twice, only
+ * with the car stopped and the engine running, each confirmed by reading it back (0.5.0, mgf.js,
+ * carstate.js). Nothing goes to the DME until that page is opened.
  *
  * The page (1600 x 520, the kit runs the screen on mgu-render): the header, the odometer and an
  * "Add entry" button, then the entries newest first; a row opens it for editing. Add / Edit and
@@ -21,7 +24,10 @@ const { cardSheet } = require('./kit/sheet');
 const { formSheet, kmText } = require('./form');
 const { docSheet, KINDS, status } = require('./docs');
 const { drawCar, seriesOf, bodyText, vinOf } = require('./car');
-const { drawGuide, guideState } = require('./customcode');
+const { drawGuide, guideState, FEATURES: CC } = require('./customcode');
+const { MgfLink } = require('./mgf');
+const { CarState } = require('./carstate');
+const { Diag } = require('./kit/diag');
 const { today, addDays } = require('./dates');
 const importer = require('./importer');
 const path = require('path');
@@ -29,6 +35,7 @@ const path = require('path');
 const W = 1600, H = 520;
 const KOMBI = 'de.bmw.infotainment.KombiIF';
 const VEHICLE = 'de.bmw.infrastructure.VehicleInformation';
+const ARM_MS = 5000, REFRESH_MS = 5000, RESULT_MS = 10000;
 const PAGES = ['Service log', 'Car', 'Custom Code'];
 const LIST_Y = 128, ROW_H = 70, ROW_GAP = 8;
 
@@ -67,14 +74,62 @@ mgu.run({
         }, log).then((sub) => { if (sub && sub.error) { odoState = 'unavailable'; log.warn('odometer: ' + sub.error); changed(); } })
             .catch((e) => { odoState = 'error'; log.error('odometer', e); changed(); });
 
-        /* ---------- series and body: notifier only, so they come when the car sends them ---------- */
-        ctx.signals.watch(VEHICLE, '1', {
+        /* ---------- series and body: notifier only, so they come when the car sends them;
+         * the selector for the Custom Code gate on the same proxy (0.5.0) ---------- */
+        const carState = new CarState();
+        const carH = carState.handlers();
+        ctx.signals.watch(VEHICLE, '1', Object.assign({
             VehicleType: safe('vehicle type', (v) => {
                 const s2 = seriesOf(v && v.typeVehicle), b = bodyText(v && v.typeBody);
                 if (s2 !== series || b !== body) { series = s2; body = b; changed(); }
             }),
-        }, log).then((sub) => { if (sub && sub.error) log.warn('vehicle type: ' + sub.error); })
+        }, carH[VEHICLE]), log, { pollMs: 1000 }).then((sub) => { if (sub && sub.error) log.warn('vehicle type: ' + sub.error); carState.status.VehicleInformation = sub; })
             .catch((e) => log.error('vehicle type', e));
+        // speed and engine speed for the gate: a stopped car doesn't send its speed again, so the
+        // getters are polled every second (seen with MGF Test 0.2.0 / 0.2.1)
+        Object.keys(carH).filter((i) => i !== VEHICLE).forEach((iface) => {
+            ctx.signals.watch(iface, '1', carH[iface], log, { pollMs: 1000 })
+                .then((sub) => { if (sub && sub.error) log.warn(iface + ': ' + sub.error); carState.status[iface.split('.').pop()] = sub; })
+                .catch((e) => log.error(iface, e));
+        });
+
+        /* ---------- MG Flasher's Custom Code settings (0.5.0) ---------- */
+        const mgf = new MgfLink(() => new Diag(ctx.signals, log), log, changed);
+        let armed = null, visible = true;
+        const valueName = (i, j) => CC[i][1] + ' ' + CC[i][2][j][1];
+        const onValue = safe('custom code', (i, j) => {
+            if (mgf.link !== 'ok' || mgf.busy) return;
+            if (mgf.values[i] === j) { armed = null; return; }            // already set
+            const g = carState.gate();
+            if (!g.ok) { armed = null; mgf.result = { i, v: j, ok: false, text: 'not now: ' + g.why, at: Date.now() }; return; }
+            if (!armed || armed.i !== i || armed.j !== j || Date.now() > armed.until) {
+                armed = { i, j, until: Date.now() + ARM_MS };
+                setTimeout(changed, ARM_MS + 100);
+                return;
+            }
+            armed = null;
+            mgf.set(i, j, () => carState.gate()).catch((e) => log.error('mgf set', e));
+        });
+        function mgfStatus(t) {
+            const r = mgf.result && Date.now() - mgf.result.at < RESULT_MS ? mgf.result : null;
+            if (mgf.link === 'off' || mgf.link === 'starting') return ['Reading MG Flasher\'s settings from the DME...', t.dim];
+            if (mgf.link === 'none') return ['Can\'t reach MG Flasher\'s settings (' + mgf.note + '). Info only.', t.warn || '#ffb000'];
+            if (mgf.link === 'unknown') return ['MG Flasher\'s settings don\'t read as expected (' + mgf.note + '). Info only: nothing is sent.', t.warn || '#ffb000'];
+            if (r && r.ok === null) return ['Setting ' + valueName(r.i, r.v) + '...', t.text];
+            if (r) return [(r.ok ? valueName(r.i, r.v) + ': confirmed by the DME.' : valueName(r.i, r.v) + ': ' + r.text), r.ok ? '#3fbf6f' : '#ef2b2d'];
+            if (armed && Date.now() <= armed.until) return ['Tap ' + valueName(armed.i, armed.j) + ' again within 5 s to set it.', t.text];
+            const g = carState.gate();
+            return g.ok ? ['Live from the DME (green dot = now). Tap a value twice to set it.', t.dim]
+                : ['Live from the DME (green dot = now). Setting needs the car stopped, engine running, in P: ' + g.why + '.', t.dim];
+        }
+        setInterval(() => {
+            try {
+                if (page !== 2 || !visible) return;
+                if (mgf.link === 'off') { mgf.start().catch((e) => log.error('mgf start', e)); return; }
+                if (!mgf.busy && !(armed && Date.now() <= armed.until) && Date.now() - mgf.readAt >= REFRESH_MS) mgf.refresh().catch((e) => log.error('mgf refresh', e));
+                changed();                    // the status line follows the car's state
+            } catch (e) { log.error('mgf tick', e); }
+        }, 1000);
 
         /* ---------- add / edit ---------- */
         const open = (sh) => { try { return !!ctx.sheet(sh); } catch (e) { log.error('sheet', e); return false; } };
@@ -209,7 +264,11 @@ mgu.run({
                 drawCar(cv, t, { series, body, variant: store.car.variant, vin, odo, odoState, docs, own: cv.own, today: today(), bottom: H - 8 - (msg ? 40 : 0) },
                     { variant: editVariant, doc: openDoc });
             } else if (page === 2) {
-                drawGuide(cv, t, { own: cv.own, bottom: H - 8 - (msg ? 40 : 0) }, guide, changed);
+                const live = mgf.link === 'ok' ? mgf : null, st = mgfStatus(t);
+                drawGuide(cv, t, {
+                    own: cv.own, bottom: H - 8 - (msg ? 40 : 0), live, armed: armed && Date.now() <= armed.until ? armed : null,
+                    onValue: live && cv.own ? onValue : null, status: st[0], statusColor: st[1],
+                }, guide, changed);
             } else drawLog(cv, t);
             if (msg) cv.text(fit(cv, msg, 24, W - 80), 40, H - 18, 24, store.warning ? (t.warn || '#ffb000') : t.dim, { literal: true });
             G.frame(cv, t, PAGES, page, []);
@@ -273,7 +332,7 @@ mgu.run({
 
         ctx.loop('MAIN', 2, render);
         const redraw = () => { changed(); setTimeout(changed, 600); };
-        ui.onVisible((name, on) => { if (name === 'MAIN' && on) redraw(); });
+        ui.onVisible((name, on) => { if (name === 'MAIN') { visible = !!on; if (on) redraw(); } });
         setInterval(changed, 60000);         // the documents' days left move on at midnight
         render().catch((e) => log.warn('first render: ' + e));
     },

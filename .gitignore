@@ -36,3 +36,5 @@ node_modules/
 __pycache__/
 *.pyc
 .claude/settings.local.json
+*.pcap
+*.pcapng

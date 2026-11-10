@@ -9,6 +9,10 @@
  * Burbles (2K), Antilag RPM (4K) and Ethanol Content Override (5K) are left out on purpose.
  *
  * Tap a feature: the dial points at its submenu. Tap a value: the dial points at that value.
+ *
+ * 0.5.0: with s.live (mgf.js read the DME), the value MG Flasher has now is marked (green dot), and
+ * s.onValue(i, j) takes value taps instead (main.js: first tap arms, a second one sets it). The
+ * armed value is outlined, and s.status / s.statusColor replace the hint line.
  */
 const { withAlpha } = require('./kit/canvas');
 const { fit } = require('./form');
@@ -39,6 +43,9 @@ function guideState() { return { feature: 0, value: null }; }
  */
 function drawGuide(cv, t, s, st, changed) {
     const S = t.sel || t.accent;
+    const GREEN = '#3fbf6f';
+    const live = s.live || null;
+    const armed = s.armed || null;
     const bottom = s.bottom || H - 8;
     const f = FEATURES[st.feature] || FEATURES[0];
     const v = st.value != null ? f[2][st.value] : null;
@@ -77,7 +84,7 @@ function drawGuide(cv, t, s, st, changed) {
     const y0 = 62, hintY = bottom - 14, ch = hintY - 28 - y0;
     FEATURES.forEach((q, i) => {
         const x = x0 + i * (cw + gap), sel = i === st.feature;
-        const rowH = q[2].some((val) => val[2]) ? 72 : 50;      // a value with a note gets a second line
+        const rowH = q[2].some((val) => val[2]) || live ? 72 : 50;      // a second line: a value's note, or 'Tap again to set'
         cv.roundRect(x, y0, cw, ch, 16, withAlpha('#ffffff', sel ? 0.1 : 0.05));
         if (sel) cv.strokeRoundRect(x, y0, cw, ch, 16, 2, withAlpha(S, 0.8));
         cv.text(q[0] + 'K', x + 22, y0 + 50, 40, sel ? S : t.text, { font: 'bold', literal: true });
@@ -86,15 +93,28 @@ function drawGuide(cv, t, s, st, changed) {
         if (s.own) cv.target(x, y0, cw, 104, () => { st.feature = i; st.value = null; changed(); return null; }, 'cc:' + i, 16);
         q[2].forEach((val, j) => {
             const y = y0 + 108 + j * rowH, on = sel && st.value === j;
+            const active = live && live.values && live.values[i] === j;
+            const isArmed = armed && armed.i === i && armed.j === j;
+            if (active && !on) cv.roundRect(x + 10, y, cw - 20, rowH - 6, 10, withAlpha(GREEN, 0.14));
             if (on) cv.roundRect(x + 10, y, cw - 20, rowH - 6, 10, withAlpha(S, 0.85));
+            if (isArmed) cv.strokeRoundRect(x + 10, y, cw - 20, rowH - 6, 10, 3, '#ffffff');
+            if (active) cv.circle(x + cw - 34, y + 24, 9, on ? '#ffffff' : GREEN);
             cv.text(val[0] + 'K', x + 26, y + 32, 24, on ? '#ffffff' : sel ? S : t.dim, { font: 'bold', literal: true });
             cv.text(fit(cv, val[1], 24, cw - 110), x + 90, y + 32, 24, on ? '#ffffff' : t.text, { literal: true });
-            if (val[2]) cv.text(fit(cv, val[2], 18, cw - 110), x + 90, y + 56, 18, on ? withAlpha('#ffffff', 0.85) : t.dim, { literal: true });
-            if (s.own) cv.target(x + 10, y, cw - 20, rowH - 6, () => { st.feature = i; st.value = j; changed(); return null; }, 'cc:' + i + ':' + j, 10);
+            const sub = isArmed ? 'Tap again to set' : val[2];
+            if (sub) cv.text(fit(cv, sub, 18, cw - 110), x + 90, y + 56, 18, isArmed ? '#ffffff' : on ? withAlpha('#ffffff', 0.85) : t.dim, { literal: true, font: isArmed ? 'bold' : undefined });
+            if (s.own) {
+                cv.target(x + 10, y, cw - 20, rowH - 6, () => {
+                    st.feature = i; st.value = j;
+                    if (s.onValue) s.onValue(i, j);
+                    changed();
+                    return null;
+                }, 'cc:' + i + ':' + j, 10);
+            }
         });
     });
-    cv.text('Cruise-control buttons move through the menu; the needle shows the submenu, then the value. Info only: the app doesn\'t change the car.',
-        x0, hintY, 18, t.dim, { literal: true });
+    cv.text(fit(cv, s.status || 'Cruise-control buttons move through the menu; the needle shows the submenu, then the value. Info only: the app doesn\'t change the car.', 18, W - 40 - x0),
+        x0, hintY, 18, s.statusColor || t.dim, { literal: true });
 }
 
 module.exports = { drawGuide, guideState, FEATURES, angleOf };
