@@ -27,8 +27,8 @@ What is settled about the car's head unit, and what is still open. "Unit" means 
 - **USB stick:** writing fails with `EROFS` at `/media/C1C6-1DF2`. Sticks are mounted read-only, at least for app users. USB export from the app is not possible as-is; see Data safety. **Reading works:** on 2026-11-08 Service Book 0.4.0 read `servicebook-import.json` from the top of the stick and imported it (6 entries, 4 document periods), and the data survived a head-unit restart.
 - **Wi-Fi server:** it starts, but a phone on the car's hotspot gets no answer. The unit's `ip filter` input chain (firewalldz) drops what it does not accept. mgu-store opens its own port 8470 with a root rule (`mgu-updater/README.md`, "Firewall"); an app's uid can't. **Apps can't serve anything to the hotspot.** Interfaces: `wlan_bridge 172.16.222.97` (hotspot), `vlan80 160.48.199.185`.
 - **Next:** SB Probe 0.3.0 uploads to a release in the private `spataionut/mgu-dumps`, signed in through GitHub's device flow with the owner's own GitHub App, which is installed on that repo only. Names resolve through the lease's DNS servers, because the unit's resolver has no internet. It was checked against real github.com from the Mac, not yet with Node 8 on the unit. The 0.2.0 Mac receiver stays as a fallback.
-- **0.4.0 widens the dump** for later apps: the whole OAP platform, every app's source, all of `/etc/oap`, identity files, systemd units, runtime facts and a filesystem index. Key material and apps' data are left out ([probe.md](probe.md), "What's in the dump"). The GitHub upload goes in gzip parts, so memory stays low and a failed part is retried on its own.
-- **Mac fallback:** the probe connects out instead of serving. It declares `mguInternet`, so mgu-uplink routes its uid through the uplink. It then finds `tools/receive-dump.py` on the uplink's subnet and uploads to it. The kit's `build.py` is patched to write `"mguInternet": true` when `app.json` says `"internet": true`.
+- **0.4.0 widens the dump** for later apps: the whole OAP platform, every app's source, all of `/etc/oap`, identity files, systemd units, runtime facts and a filesystem index. Key material and apps' data are left out (the removed `docs/probe.md`, "What's in the dump", in git history). The GitHub upload goes in gzip parts, so memory stays low and a failed part is retried on its own.
+- **Mac fallback:** the probe connects out instead of serving. It declares `mguInternet`, so mgu-uplink routes its uid through the uplink. It then finds `tools/receive-dump.py` (removed with the probe) on the uplink's subnet and uploads to it. The kit's `build.py` is patched to write `"mguInternet": true` when `app.json` says `"internet": true`.
 
 ## Odometer (settled)
 
@@ -91,7 +91,7 @@ What is settled about the car's head unit, and what is still open. "Unit" means 
 
 ## Access
 
-There is no SSH key (the unit was rooted on a PC that's gone), so `tools/unit-dump.sh` can't be used for now. [probe.md](probe.md) gets the same files through an app installed from the Store.
+There is no SSH key (the unit was rooted on a PC that's gone), so `tools/unit-dump.sh` can't be used for now. SB Probe got the same files through an app installed from the Store; it was removed on 2026-11-10 (`apps/sp_probe` and `docs/probe.md` are in git history, last in `f31c7c1`).
 
 ## Vendored kit
 

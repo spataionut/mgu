@@ -57,6 +57,8 @@ For each feature, the candidates should show the request sent right after each c
 
 ## Step 2: the read-only test on the head unit (MGF Read Test, `apps/sp_mgfread`)
 
+*MGF Read Test was removed from the repo on 2026-11-10, once Service Book 0.5.0 did the same. Its code and test are in git history (last in `f31c7c1`). The steps below are the record of how it was tested.*
+
 This checks whether the DME answers the head unit's own diagnostic link (`InternalTasu`, tester `0xF2`), and whether the head unit can read MG Flasher's state from it.
 - **It only reads.** `reader.js` `check()` lets out the DME's identity (`22 F1 50`) and six fixed memory reads (`23 44 ...`). Everything else throws before it reaches the transport: writes, routines, sessions, I/O control, other addresses, other lengths. `test/mgfread.test.js` checks this.
 - It reads once when it opens, and again on **Read again**. Each row shows the decoded value, the raw bytes and the time taken, and the same goes to the app's log.
