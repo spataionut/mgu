@@ -2,7 +2,7 @@
   "id": "sp_servicebook",
   "title": "Service Book",
   "description": "A log of every service and repair on the car (date, km from the odometer, type, notes, cost, workshop), and the car's details: model, VIN, total km, and RCA, CASCO, Rovinieta and ITP with days left. A Custom Code page shows MG Flasher's settings (map, Max Cooling, exhaust flap, valet) read from the DME, and sets them over the car's own diagnostic link: tapped twice, only stopped with the engine running, each confirmed by reading it back. Typed on the app's own touch keyboard, or imported from a USB stick.",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "vendor": "sp",
   "loggingId": "OASB",
   "iconGlyph": "wrench",

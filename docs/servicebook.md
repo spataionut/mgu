@@ -1,4 +1,4 @@
-# Service Book 0.5.0
+# Service Book 0.5.1
 
 `apps/sp_servicebook`. Milestone 1 (0.1.0) has:
 - a log list, newest first
@@ -22,6 +22,8 @@
 0.4.0 adds **USB import**, for history and documents typed on the Mac instead of in the car. See [Import from USB](#import-from-usb).
 
 0.5.0 makes **Custom Code** live: it reads MG Flasher's settings from the DME and sets them, with no ENET adapter. See [Custom Code live](#custom-code-live).
+
+0.5.1 fixes Custom Code staying info only after the car has slept ("last command 00 00"). See the sanity check under [Custom Code live](#custom-code-live).
 
 Next: the Due and Stats screens.
 
@@ -77,12 +79,12 @@ What it does and doesn't do:
 
 How it works (the bytes and addresses are in `mgf.js`; the capture and head-unit tests are in [mgflasher-capture.md](mgflasher-capture.md)):
 - **When it talks to the DME:** nothing is sent until the Custom Code tab is opened. Then it reads the four settings and the last command id about every 5 s, only while that tab is on screen.
-- **Sanity check:** every value must be in range and the last id must end in `69`. Otherwise the page says the settings don't read as expected and stays info only: no write. MG Flasher keeps the settings at RAM addresses that may move after an MG Flasher update.
+- **Sanity check:** every value must be in range and the last id must end in `69`, or read `00 00`. The DME's RAM is cleared each time the car wakes, so until MG Flasher or this app sends a command it reads `00 00` (seen in the car 2026-11-13; 0.5.0 treated that as a wrong build). `00 00` never counts as a confirmation. Otherwise the page says the settings don't read as expected and stays info only: no write. MG Flasher keeps the settings at RAM addresses that may move after an MG Flasher update.
 - **Current value:** each setting's current value has a green dot.
 - **Setting a value:** tap a value to arm it ("Tap again to set"), and tap it again within 5 s to send. It only goes while the car is stopped (live speed), the engine runs, and the selector isn't in R/N/D. Otherwise the status line says why.
 - **Confirmation:** after the write, the last command id must read the setting's id and the setting must read the new value. Only then is it "confirmed by the DME". Otherwise the line says what it read.
 - **Signals added:** `InternalTasu` (`sendTasuRequest` / `sendTasuResponse`), `Vehicle2.statusCarSpeed2`, `CDS.statusEngineSpeed2`, and `VehicleInformation.statusGearboxDrive` / `DataPowerTrain2`. All are optional: a unit without them installs the app, and the page stays info only.
-- **Tests:** `node test/servicebook-mgf.test.js` checks the guard, the settings against a stubbed DME, a write that isn't taken, a build that reads wrong, no answer, and the page.
+- **Tests:** `node test/servicebook-mgf.test.js` checks the guard, the settings against a stubbed DME, a write that isn't taken, a fresh DME (last `00 00`), a build that reads wrong, no answer, and the page.
 
 ## Controls
 
@@ -156,3 +158,5 @@ node mgu-install.js usb-repo /Volumes/MGU <export folder>
 - Everything survived a head-unit restart.
 
 **0.5.0 on the car (2026-11-10):** passed (18c). Installed from a stick copy of the GitHub source. In Custom Code the green dots matched MG Flasher, and the map, Max Cooling, flap and valet were each set from the head unit and **confirmed by the DME**, then set back.
+
+**0.5.0 on a later drive (2026-11-13):** Custom Code showed "don't read as expected (last command 00 00)" and stayed info only: the last command id is `00 00` until a command is sent after the car wakes. Fixed in 0.5.1, not yet tested in the car.

@@ -10,8 +10,9 @@
  *   state   23 44 <address> <length>: the RAM where MG Flasher keeps each setting.
  *   taken   23 44 60107F14 2 -> <id> 69: the id of the last command MG Flasher's code took.
  * The addresses belong to this MG Flasher build and may move after an MG Flasher update: before
- * any write the state must read sane (every value in range, the last id ending in 69), else the
- * page is info only.
+ * any write the state must read sane (every value in range, the last id ending in 69, or 00 00 when
+ * no command came since the DME started), else the page is info only. A write is still confirmed
+ * only by the last id reading <id> 69 afterwards.
  *
  * What may leave the head unit is fixed here: check() throws for anything but these reads and
  * these writes (each feature's own values only) to the DME. The Diag is private to this module.
@@ -93,6 +94,14 @@ class MgfLink {
         return b[0];
     }
 
+    /**
+     * the last-command bytes MG Flasher's code leaves: <id> 69 after a command, or 00 00 when none came
+     * since the DME started (its RAM is cleared each time the car wakes; seen in the car 2026-11-13)
+     */
+    static lastOk(b) {
+        return !!b && b.length === 2 && (b[1] === 0x69 || (b[0] === 0 && b[1] === 0));
+    }
+
     /** Read every setting (and the last id, as the sanity check). Returns true when all read sane. */
     async refresh() {
         if (this.busy || this.link === 'off') return false;
@@ -113,7 +122,7 @@ class MgfLink {
             let last;
             try { last = await this._read(LAST); } catch (e) { last = { error: String(e.message || e) }; }
             if (last.bytes) answered++;
-            if (!last.bytes || last.bytes[1] !== 0x69) { sane = false; why = why || 'last command ' + (last.error || hex(last.bytes)); }
+            if (!last.bytes || !MgfLink.lastOk(last.bytes)) { sane = false; why = why || 'last command ' + (last.error || hex(last.bytes)); }
             this.link = sane ? 'ok' : answered ? 'unknown' : 'none';
             this.note = sane ? '' : why;
             this.readAt = Date.now();

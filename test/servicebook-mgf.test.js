@@ -32,7 +32,7 @@ no(0x2E, [0x69, 0x45, 0x01, 0xAF], 0x29);
 /* ---------- a stubbed DME with MG Flasher's code ---------- */
 function fakeDme(opts) {
     opts = opts || {};
-    const ram = { map: 2, cooling: 0, flap: 2, valet: 0, last: [0x49, 0x69] };
+    const ram = { map: 2, cooling: 0, flap: 2, valet: 0, last: opts.last || [0x49, 0x69] };
     const sent = [];
     const diag = {
         error: opts.error || null,
@@ -103,6 +103,26 @@ const open = () => ({ ok: true });
     r = await m3.set(0, 0, open);
     assert.ok(!r.ok && !d3.sent.some((u) => u[0] === 0x2E));
 
+    // the DME just woke: no command since it started, last reads 00 00 (car, 2026-11-13). Usable, and a write confirms.
+    const d6 = fakeDme({ last: [0, 0] });
+    const m6 = new MgfLink(() => d6.diag, log);
+    await m6.start();
+    assert.strictEqual(m6.link, 'ok', m6.note);
+    r = await m6.set(2, 1, open);
+    assert.ok(r.ok, r.text);
+    // ...but 00 00 with no write taken is still not a confirmation
+    const d7 = fakeDme({ last: [0, 0], ignore: true });
+    const m7 = new MgfLink(() => d7.diag, log);
+    await m7.start();
+    r = await m7.set(0, 0, open);
+    assert.ok(!r.ok && /not taken: last 00 00/.test(r.text), r.text);
+    // other last bytes stay unknown
+    for (const b of [[0x49, 0x00], [0x00, 0x01], [0x37, 0x37]]) {
+        const m8 = new MgfLink(() => fakeDme({ last: b }).diag, log);
+        await m8.start();
+        assert.strictEqual(m8.link, 'unknown', String(b));
+    }
+
     // no answers at all; no diagnostic link
     const m4 = new MgfLink(() => fakeDme({ silent: true }).diag, log);
     await m4.start();
@@ -132,5 +152,5 @@ const open = () => ({ ok: true });
     draw({ live, armed: { i: 0, j: 0 }, onValue: () => {}, status: 'Tap Switchable Maps 100 RON again within 5 s to set it.', statusColor: '#ffffff' }, 'cc-armed');
     draw({ live: { values: [0, 0, 2, 0] }, onValue: () => {}, status: 'Switchable Maps 100 RON: confirmed by the DME.', statusColor: '#3fbf6f' }, 'cc-confirmed');
     draw({ status: 'MG Flasher\'s settings don\'t read as expected (flap reads 37). Info only: nothing is sent.', statusColor: '#ffb000' }, 'cc-unknown');
-    console.log('servicebook mgf: ok (guard, start, set x6 confirmed, not taken, unknown build, no answer, page)');
+    console.log('servicebook mgf: ok (guard, start, set x6 confirmed, not taken, fresh DME 00 00, unknown build, no answer, page)');
 })().catch((e) => { console.error(e); process.exit(1); });
