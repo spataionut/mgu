@@ -25,7 +25,9 @@ const { formSheet, kmText } = require('./form');
 const { docSheet, KINDS, status } = require('./docs');
 const { drawCar, seriesOf, bodyText, vinOf } = require('./car');
 const { drawGuide, guideState, FEATURES: CC } = require('./customcode');
-const { MgfLink } = require('./mgf');
+const { MgfLink, FEATURES: MGF } = require('./mgf');
+/* Valet Mode cuts power at once: set only stopped in P. The others also while driving (0.5.2). */
+const parkedOnly = (i) => !!MGF[i] && MGF[i].key === 'valet';
 const { CarState } = require('./carstate');
 const { Diag } = require('./kit/diag');
 const { today, addDays } = require('./dates');
@@ -100,7 +102,7 @@ mgu.run({
         const onValue = safe('custom code', (i, j) => {
             if (mgf.link !== 'ok' || mgf.busy) return;
             if (mgf.values[i] === j) { armed = null; return; }            // already set
-            const g = carState.gate();
+            const g = carState.gate(parkedOnly(i));
             if (!g.ok) { armed = null; mgf.result = { i, v: j, ok: false, text: 'not now: ' + g.why, at: Date.now() }; return; }
             if (!armed || armed.i !== i || armed.j !== j || Date.now() > armed.until) {
                 armed = { i, j, until: Date.now() + ARM_MS };
@@ -108,7 +110,7 @@ mgu.run({
                 return;
             }
             armed = null;
-            mgf.set(i, j, () => carState.gate()).catch((e) => log.error('mgf set', e));
+            mgf.set(i, j, () => carState.gate(parkedOnly(i))).catch((e) => log.error('mgf set', e));
         });
         function mgfStatus(t) {
             const r = mgf.result && Date.now() - mgf.result.at < RESULT_MS ? mgf.result : null;
@@ -118,9 +120,10 @@ mgu.run({
             if (r && r.ok === null) return ['Setting ' + valueName(r.i, r.v) + '...', t.text];
             if (r) return [(r.ok ? valueName(r.i, r.v) + ': confirmed by the DME.' : valueName(r.i, r.v) + ': ' + r.text), r.ok ? '#3fbf6f' : '#ef2b2d'];
             if (armed && Date.now() <= armed.until) return ['Tap ' + valueName(armed.i, armed.j) + ' again within 5 s to set it.', t.text];
-            const g = carState.gate();
-            return g.ok ? ['Live from the DME (green dot = now). Tap a value twice to set it.', t.dim]
-                : ['Live from the DME (green dot = now). Setting needs the car stopped, engine running, in P: ' + g.why + '.', t.dim];
+            const g = carState.gate(false), gp = carState.gate(true);
+            if (!g.ok) return ['Live from the DME (green dot = now). Setting needs the engine running: ' + g.why + '.', t.dim];
+            return gp.ok ? ['Live from the DME (green dot = now). Tap a value twice to set it.', t.dim]
+                : ['Live from the DME (green dot = now). Tap a value twice to set it. Valet only stopped in P.', t.dim];
         }
         setInterval(() => {
             try {

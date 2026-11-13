@@ -1,4 +1,4 @@
-# Service Book 0.5.1
+# Service Book 0.5.2
 
 `apps/sp_servicebook`. Milestone 1 (0.1.0) has:
 - a log list, newest first
@@ -25,6 +25,8 @@
 
 0.5.1 fixes Custom Code staying info only after the car has slept ("last command 00 00"). See the sanity check under [Custom Code live](#custom-code-live).
 
+0.5.2 lets Custom Code set the map, Max Cooling and the exhaust flap **while driving**, as MG Flasher's own menu does. Valet Mode is still set only stopped in P, because it cuts power at once.
+
 Next: the Due and Stats screens.
 
 ## Files
@@ -36,7 +38,7 @@ Next: the Due and Stats screens.
 | `car.js` | The Car page: model (series → name table plus your variant), body, VIN, km, document tiles. |
 | `customcode.js` | The Custom Code page: the CCM table (`FEATURES`) and a drawn tachometer whose needle shows the picked submenu or value. 0.5.0: a green dot on each setting's current value, the armed value outlined, and a status line. |
 | `mgf.js` | 0.5.0: MG Flasher's settings over the head unit's diagnostic link (`InternalTasu`, DME `0x12`). `check()` allows only the captured reads and each setting's own writes. Sets and confirms as the MG Flasher app does. |
-| `carstate.js` | 0.5.0: the write gate (live speed under 1 km/h, engine over 400 rpm, not in R/N/D), from signals no older than 3 s. |
+| `carstate.js` | The write gate, from signals no older than 3 s: engine over 400 rpm; for Valet Mode also live speed under 1 km/h and not in R/N/D (0.5.2; before, every setting needed that). |
 | `importer.js` | USB import: finds `servicebook-import.json` on the sticks under `/media`, checks every item, and works out what's new. Also a checker on the Mac: `node apps/sp_servicebook/importer.js <file>`. |
 | `docs.js` | Document status, and the period form: valid from/until (date pad, Today, length pills such as 12 months = from + 12 months − 1 day), insurer or station, policy/serial number, km for ITP, cost. Delete takes two taps. |
 | `dates.js` | Calendar maths on `YYYY-MM-DD`. |
@@ -81,10 +83,10 @@ How it works (the bytes and addresses are in `mgf.js`; the capture and head-unit
 - **When it talks to the DME:** nothing is sent until the Custom Code tab is opened. Then it reads the four settings and the last command id about every 5 s, only while that tab is on screen.
 - **Sanity check:** every value must be in range and the last id must end in `69`, or read `00 00`. The DME's RAM is cleared each time the car wakes, so until MG Flasher or this app sends a command it reads `00 00` (seen in the car 2026-11-13; 0.5.0 treated that as a wrong build). `00 00` never counts as a confirmation. Otherwise the page says the settings don't read as expected and stays info only: no write. MG Flasher keeps the settings at RAM addresses that may move after an MG Flasher update.
 - **Current value:** each setting's current value has a green dot.
-- **Setting a value:** tap a value to arm it ("Tap again to set"), and tap it again within 5 s to send. It only goes while the car is stopped (live speed), the engine runs, and the selector isn't in R/N/D. Otherwise the status line says why.
+- **Setting a value:** tap a value to arm it ("Tap again to set"), and tap it again within 5 s to send. It only goes while the engine runs (live engine speed). Since 0.5.2 the map, Max Cooling and the flap also go while driving, at any speed and in any gear (the owner's choice, 2026-11-13). **Valet Mode** still needs the car stopped (live speed) and the selector in P, because it cuts power at once. Otherwise the status line says why.
 - **Confirmation:** after the write, the last command id must read the setting's id and the setting must read the new value. Only then is it "confirmed by the DME". Otherwise the line says what it read.
 - **Signals added:** `InternalTasu` (`sendTasuRequest` / `sendTasuResponse`), `Vehicle2.statusCarSpeed2`, `CDS.statusEngineSpeed2`, and `VehicleInformation.statusGearboxDrive` / `DataPowerTrain2`. All are optional: a unit without them installs the app, and the page stays info only.
-- **Tests:** `node test/servicebook-mgf.test.js` checks the guard, the settings against a stubbed DME, a write that isn't taken, a fresh DME (last `00 00`), a build that reads wrong, no answer, and the page.
+- **Tests:** `node test/servicebook-mgf.test.js` checks the guard, the settings against a stubbed DME, a write that isn't taken, a fresh DME (last `00 00`), the write gate (driving vs Valet), a build that reads wrong, no answer, and the page.
 
 ## Controls
 
@@ -160,3 +162,5 @@ node mgu-install.js usb-repo /Volumes/MGU <export folder>
 **0.5.0 on the car (2026-11-10):** passed (18c). Installed from a stick copy of the GitHub source. In Custom Code the green dots matched MG Flasher, and the map, Max Cooling, flap and valet were each set from the head unit and **confirmed by the DME**, then set back.
 
 **0.5.0 on a later drive (2026-11-13):** Custom Code showed "don't read as expected (last command 00 00)" and stayed info only: the last command id is `00 00` until a command is sent after the car wakes. Fixed in 0.5.1, not yet tested in the car.
+
+**0.5.2 (2026-11-13):** the map, Max Cooling and flap may be set while driving; Valet only stopped in P. Not yet tested in the car. To test: while driving, set the flap and say it is confirmed; Valet while moving must say "not now: the car is moving".

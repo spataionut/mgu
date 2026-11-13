@@ -131,6 +131,23 @@ const open = () => ({ ok: true });
     await m5.start();
     assert.ok(m5.link === 'none' && /no diagnostic link/.test(m5.note));
 
+    /* ---------- the write gate (carstate.js): driving allowed, Valet only stopped in P (0.5.2) ---------- */
+    const { CarState, FRESH_MS } = require(path.join(js, 'carstate'));
+    let now = 1000;
+    const cs = new CarState(() => now);
+    assert.ok(!cs.gate(false).ok && /engine speed/.test(cs.gate(false).why), 'no rpm: no write');
+    cs.rpm(200 * 4);                                   // 200 rpm: off
+    assert.ok(!cs.gate(false).ok && /not running/.test(cs.gate(false).why));
+    cs.rpm(800 * 4); cs.speed(90 / 0.015625); cs.stage('D');
+    assert.ok(cs.gate(false).ok, 'driving at 90 km/h in D: map, cooling, flap may be set');
+    assert.ok(!cs.gate(true).ok && /moving/.test(cs.gate(true).why), 'valet: not while moving');
+    cs.speed(0);
+    assert.ok(!cs.gate(true).ok && /selector in D/.test(cs.gate(true).why), 'valet: not in D');
+    cs.stage('P');
+    assert.ok(cs.gate(true).ok, 'valet: stopped in P');
+    now += FRESH_MS + 1;
+    assert.ok(!cs.gate(false).ok, 'stale rpm: no write');
+
     /* ---------- the page with live state ---------- */
     const st = CC.guideState();
     const taps = [];

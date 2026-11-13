@@ -54,13 +54,19 @@ class CarState {
         return this._show('speed', 'km/h', 'Vehicle2') + '  ·  ' + this._show('rpm', 'rpm', 'CDS') + '  ·  ' + this._show('stage', '', 'VehicleInformation');
     }
 
-    /** May the map write go now? Stationary (live speed under 1 km/h), engine running, not in R / N / D. */
-    gate() {
-        const s = this._fresh('speed'), r = this._fresh('rpm'), g = this._fresh('stage');
-        if (s === null) return { ok: false, why: 'no live speed from the car' };
-        if (s >= 1) return { ok: false, why: 'the car is moving' };
+    /**
+     * May a write go now? Always: engine running (live). parked (Valet Mode, which cuts power at once):
+     * also stationary (live speed under 1 km/h) and not in R / N / D. Map, Max Cooling and the flap may
+     * be set while driving, as in MG Flasher's own menu (0.5.2, the owner's choice 2026-11-13).
+     */
+    gate(parked) {
+        const r = this._fresh('rpm');
         if (r === null) return { ok: false, why: 'no live engine speed' };
         if (r < RUNNING_RPM) return { ok: false, why: 'the engine is not running' };
+        if (!parked) return { ok: true };
+        const s = this._fresh('speed'), g = this._fresh('stage');
+        if (s === null) return { ok: false, why: 'no live speed from the car' };
+        if (s >= 1) return { ok: false, why: 'the car is moving' };
         if (g && g !== 'P') return { ok: false, why: 'selector in ' + g + ', put it in P' };
         return { ok: true };
     }
